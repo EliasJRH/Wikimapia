@@ -3,6 +3,8 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -13,16 +15,13 @@ enum State {
     TEXT,
 }
 
-fn main() {
-    // 
-    let contents = fs::read_to_string("enwiki-latest-pages-articles-multistream1.xml-p1p41242").expect("Should have been able to read");
+fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
     let mut pages_to_links: HashMap<String, Vec<String>> = HashMap::new();
     let links_regex = Regex::new(
         r"(?<internal>(?<=\[\[)(?!File:)(?!Category:)[\w\(\) -]*(?=|\]\]))|(?<lang>(?<={{etymology\|)[a-z]{1,3})",
     )
     .unwrap();
     let mut reader = Reader::from_str(&contents);
-    reader.
     let mut cur_page = String::default();
     let mut cur_text = String::default();
     let mut cur_state: State = State::IDLE;
@@ -38,8 +37,8 @@ fn main() {
 
             /* In order to tag to be valid, it must not contain an empty redirect tag.
             A self-closed redirect tag indicated that that revision just modified a link to redirect to another article
-            We don't care about those. We want pages that don't contain a redirect tag, but because redirect tags always 
-            come before text tags that contain actual content, we need to check if a redirect came before. That's why 
+            We don't care about those. We want pages that don't contain a redirect tag, but because redirect tags always
+            come before text tags that contain actual content, we need to check if a redirect came before. That's why
             State::IGNORE is set whenever encountering a self-closing redirect tag*/
             Ok(Event::Start(e)) => match e.name().as_ref() {
                 b"title" => cur_state = State::TITLE,
@@ -54,7 +53,7 @@ fn main() {
                 _ => (),
             },
 
-            /* If we hit text while still being in the State::TEXT state, then we'll know that the page is not a 
+            /* If we hit text while still being in the State::TEXT state, then we'll know that the page is not a
             redirect and we should parse the content associated with the */
             Ok(Event::Text(e)) => match cur_state {
                 State::TITLE => {
@@ -69,22 +68,30 @@ fn main() {
                     let mut captures = links_regex.captures_iter(&cur_text);
                     loop {
                         let first = captures.next();
-                        if first.is_none() { break; }
+                        if first.is_none() {
+                            break;
+                        }
                         match first.unwrap() {
                             Ok(cap) => {
-                                match cap.name("internal"){
-                                    Some(val) => pages_to_links.get_mut(&cur_page).unwrap().push(String::from(val.as_str())),
+                                match cap.name("internal") {
+                                    Some(val) => pages_to_links
+                                        .get_mut(&cur_page)
+                                        .unwrap()
+                                        .push(String::from(val.as_str())),
                                     // Some(val) => println!("Internal: {}", val.as_str()),
-                                    Some(val) => (),
+                                    // Some(val) => (),
                                     None => (),
                                 }
-                                match cap.name("lang"){
-                                    Some(val) => pages_to_links.get_mut(&cur_page).unwrap().push(String::from(val.as_str())),
+                                match cap.name("lang") {
+                                    Some(val) => pages_to_links
+                                        .get_mut(&cur_page)
+                                        .unwrap()
+                                        .push(String::from(val.as_str())),
                                     // Some(val) => println!("Lang: {}", val.as_str()),
-                                    Some(val) => (),
+                                    // Some(val) => (),
                                     None => (),
                                 }
-                            },
+                            }
                             Err(c) => break,
                         }
                     }
@@ -103,4 +110,37 @@ fn main() {
     // count including redirects: 27371
     // count excluding redirects: 21174
     // Time taken 1132.105713876ss
+    return pages_to_links;
+}
+
+fn main() {
+    //
+    let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
+        .expect("Can't find file");
+    let mut file_reader = BufReader::new(contents_file);
+    let line_count = (&mut file_reader).lines().count();
+    println!("{}", line_count);
+    let _ = file_reader.seek(SeekFrom::Start(0));
+    let mut buf = String::new();
+    let _ = (&mut file_reader).read_line(&mut buf);
+    let mut content_vec: Vec<&str> = Vec::with_capacity(4);
+    for i in 1..4 {
+        let mut section = String::new();
+        for _ in 0..(line_count / 4) {
+            let _ = file_reader.read_line(&mut section);
+        }
+        if section.ends_with("</page>"){ continue; }
+        loop {
+            let _ = file_reader.read_line(&mut section);
+            if section.ends_with("</page>\n"){
+                break;
+            }
+        }
+        // content_vec.push(section.as_mut_str());
+    }
+    
+    // println!("{}", buf);
+    // let contents = fs::read_to_string("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
+    //     .expect("Should have been able to read");
+    // parse_contents(&contents);
 }
