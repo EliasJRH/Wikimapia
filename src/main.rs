@@ -155,7 +155,7 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
                 break;
             }
         }
-        assert_eq!(section.ends_with("</page>\n"), true);
+        assert!(section.ends_with("</page>\n"));
         println!("Section {} line count: {}", i, cur_line_count);
         content_vec.push(section);
         cur_line_count = 0;
@@ -176,7 +176,7 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
             _ => (),
         }
     }
-    assert_eq!(last_section.ends_with("</mediawiki>"), true);
+    assert!(last_section.ends_with("</mediawiki>"));
     println!("Section {} line count: {}", divisions, cur_line_count);
 
     content_vec.push(last_section);
@@ -187,7 +187,14 @@ fn main() {
     //
     let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
         .expect("Can't find file");
-    let content_vec = divide_input(contents_file, Some(12));
+    // 1 division -> 18 minutes
+    // 6 divisions -> 8 minutes
+    // 12 divisions -> 5.45 minutes
+    // 18 divisions -> 6.05 minutes
+    // 24 divisions -> 5.81 minutes
+    // 32 divisions -> Total time: 6.26 minutes
+    // 64 divisions -> Total time: 5.86 minutes
+    let content_vec = divide_input(contents_file, Some(64));
     
     let mut handles: Vec<thread::JoinHandle<HashMap<String, Vec<String>>>> = vec![];
     for group in content_vec {
