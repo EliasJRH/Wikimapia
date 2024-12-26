@@ -98,7 +98,7 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
                                     None => (),
                                 }
                             }
-                            Err(c) => break,
+                            Err(_c) => break,
                         }
                     }
                     cur_state = State::IDLE;
@@ -115,23 +115,32 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
     println!("Number of articles processed: {}", count);
     // count excluding redirects: 21171
     // Time taken 1132.105713876ss
-    return pages_to_links;
+    pages_to_links
 }
 
-fn main() {
-    //
-    let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
-        .expect("Can't find file");
+fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
+    // Create BufferedReader to determine size of file
     let mut file_reader = BufReader::new(contents_file);
+    let divisions = divisions.unwrap_or(12);
+
     let total_line_count = (&mut file_reader).lines().count();
     println!("Total line count: {}", total_line_count);
+
+    /* Move BufferedReader back to beginning of file to start dividing file into mostly equal
+    parts. 
+    */
     let _ = file_reader.seek(SeekFrom::Start(0));
-    let mut content_vec: Vec<String> = Vec::new();
+    let mut content_vec: Vec<String> = Vec::new(); // Vector containing each part
     let mut cur_line_count = 0;
-    for i in 1..12 {
+
+    /* A page must be fully contained within each block, we can't have part of a page be 
+    in one block and the rest be in another as that would mess up parsing. Therefore, we
+    read at least total_line_count/divisions lines then check if the block ends with </page>
+    indicating the end of the page. If not, we just keep adding to the block until it does*/
+    for i in 1..divisions {
         cur_line_count = 0;
         let mut section = String::new();
-        for _ in 0..(total_line_count / 12) {
+        for _ in 0..(total_line_count / divisions) {
             let _ = file_reader.read_line(&mut section);
             cur_line_count += 1;
         }
@@ -146,10 +155,13 @@ fn main() {
                 break;
             }
         }
+        assert_eq!(section.ends_with("</page>\n"), true);
         println!("Section {} line count: {}", i, cur_line_count);
         content_vec.push(section);
         cur_line_count = 0;
     }
+
+    /* The last section must contain the rest of the file, so we read until EOF */
     let mut last_section = String::new();
     loop {
         let bytes = file_reader.read_line(&mut last_section);
@@ -164,10 +176,20 @@ fn main() {
             _ => (),
         }
     }
-    content_vec.push(last_section);
-    println!("Section 12 line count: {}", cur_line_count);
-    let mut handles: Vec<thread::JoinHandle<HashMap<String, Vec<String>>>> = vec![];
+    assert_eq!(last_section.ends_with("</mediawiki>"), true);
+    println!("Section {} line count: {}", divisions, cur_line_count);
 
+    content_vec.push(last_section);
+    content_vec
+}
+
+fn main() {
+    //
+    let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
+        .expect("Can't find file");
+    let content_vec = divide_input(contents_file, Some(12));
+    
+    let mut handles: Vec<thread::JoinHandle<HashMap<String, Vec<String>>>> = vec![];
     for group in content_vec {
         let handle = thread::spawn(move || parse_contents(&group.as_str()));
         handles.push(handle);
