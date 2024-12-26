@@ -2,9 +2,9 @@ use fancy_regex::Regex;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::thread;
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -31,12 +31,15 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
         // Idea, split file into 4 sections of roughly equal size, then have a thread compute each section
         // xml reader reads each line of xml input
         match reader.read_event() {
-            Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
+            Err(e) => match e {
+                quick_xml::Error::EndEventMismatch { .. } => break,
+                _ => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
+            },
             // If EOF, break out of loop
             Ok(Event::Eof) => break,
 
             /* In order to tag to be valid, it must not contain an empty redirect tag.
-            A self-closed redirect tag indicated that that revision just modified a link to redirect to another article
+            A self-closed redirect tag indicates that that revision just modified a link to redirect to another article
             We don't care about those. We want pages that don't contain a redirect tag, but because redirect tags always
             come before text tags that contain actual content, we need to check if a redirect came before. That's why
             State::IGNORE is set whenever encountering a self-closing redirect tag*/
@@ -49,7 +52,10 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
                 _ => (),
             },
             Ok(Event::Empty(e)) => match e.name().as_ref() {
-                b"redirect" => cur_state = State::IGNORE,
+                b"redirect" => {
+                    cur_state = State::IGNORE;
+                    pages_to_links.remove(&cur_page);
+                }
                 _ => (),
             },
 
@@ -63,7 +69,7 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
                 }
                 State::TEXT => {
                     count += 1;
-                    println!("count: {}", count);
+                    // println!("count: {}", count);
                     cur_text = String::from(e.unescape().unwrap().into_owned().as_str());
                     let mut captures = links_regex.captures_iter(&cur_text);
                     loop {
@@ -106,9 +112,8 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
     }
     let end = start.elapsed();
     println!("Time taken {:?}", end);
-    // println!("{:?}", pages_to_links);
-    // count including redirects: 27371
-    // count excluding redirects: 21174
+    println!("Number of articles processed: {}", count);
+    // count excluding redirects: 21171
     // Time taken 1132.105713876ss
     return pages_to_links;
 }
@@ -118,29 +123,58 @@ fn main() {
     let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
         .expect("Can't find file");
     let mut file_reader = BufReader::new(contents_file);
-    let line_count = (&mut file_reader).lines().count();
-    println!("{}", line_count);
+    let total_line_count = (&mut file_reader).lines().count();
+    println!("Total line count: {}", total_line_count);
     let _ = file_reader.seek(SeekFrom::Start(0));
-    let mut buf = String::new();
-    let _ = (&mut file_reader).read_line(&mut buf);
-    let mut content_vec: Vec<&str> = Vec::with_capacity(4);
-    for i in 1..4 {
+    let mut content_vec: Vec<String> = Vec::new();
+    let mut cur_line_count = 0;
+    for i in 1..12 {
+        cur_line_count = 0;
         let mut section = String::new();
-        for _ in 0..(line_count / 4) {
+        for _ in 0..(total_line_count / 12) {
             let _ = file_reader.read_line(&mut section);
+            cur_line_count += 1;
         }
-        if section.ends_with("</page>"){ continue; }
+
+        if section.ends_with("</page>") {
+            continue;
+        }
         loop {
             let _ = file_reader.read_line(&mut section);
-            if section.ends_with("</page>\n"){
+            cur_line_count += 1;
+            if section.ends_with("</page>\n") {
                 break;
             }
         }
-        // content_vec.push(section.as_mut_str());
+        println!("Section {} line count: {}", i, cur_line_count);
+        content_vec.push(section);
+        cur_line_count = 0;
     }
-    
-    // println!("{}", buf);
-    // let contents = fs::read_to_string("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
-    //     .expect("Should have been able to read");
-    // parse_contents(&contents);
+    let mut last_section = String::new();
+    loop {
+        let bytes = file_reader.read_line(&mut last_section);
+        match bytes {
+            Ok(c) => {
+                if c == 0 {
+                    break;
+                } else {
+                    cur_line_count += 1;
+                }
+            }
+            _ => (),
+        }
+    }
+    content_vec.push(last_section);
+    println!("Section 12 line count: {}", cur_line_count);
+    let mut handles: Vec<thread::JoinHandle<HashMap<String, Vec<String>>>> = vec![];
+
+    for group in content_vec {
+        let handle = thread::spawn(move || parse_contents(&group.as_str()));
+        handles.push(handle);
+    }
+
+    let results: Vec<HashMap<String, Vec<String>>> = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("Thread panicked!"))
+        .collect();
 }
