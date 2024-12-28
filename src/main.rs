@@ -1,10 +1,11 @@
 use fancy_regex::Regex;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
+use rusqlite::{params, Connection, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::thread;
+use std::thread::{self, available_parallelism};
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -23,7 +24,6 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
     .unwrap();
     let mut reader = Reader::from_str(&contents);
     let mut cur_page = String::default();
-    let mut cur_text = String::default();
     let mut cur_state: State = State::IDLE;
     let mut count: u64 = 0;
     let start = Instant::now();
@@ -70,7 +70,7 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
                 State::TEXT => {
                     count += 1;
                     // println!("count: {}", count);
-                    cur_text = String::from(e.unescape().unwrap().into_owned().as_str());
+                    let cur_text = String::from(e.unescape().unwrap().into_owned());
                     let mut captures = links_regex.captures_iter(&cur_text);
                     loop {
                         let first = captures.next();
@@ -127,13 +127,13 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
     println!("Total line count: {}", total_line_count);
 
     /* Move BufferedReader back to beginning of file to start dividing file into mostly equal
-    parts. 
+    parts.
     */
     let _ = file_reader.seek(SeekFrom::Start(0));
     let mut content_vec: Vec<String> = Vec::new(); // Vector containing each part
     let mut cur_line_count = 0;
 
-    /* A page must be fully contained within each block, we can't have part of a page be 
+    /* A page must be fully contained within each block, we can't have part of a page be
     in one block and the rest be in another as that would mess up parsing. Therefore, we
     read at least total_line_count/divisions lines then check if the block ends with </page>
     indicating the end of the page. If not, we just keep adding to the block until it does*/
@@ -184,26 +184,25 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
 }
 
 fn main() {
-    //
     let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
         .expect("Can't find file");
+    let num_cpus = available_parallelism().unwrap().get();
+
     // 1 division -> 18 minutes
     // 6 divisions -> 8 minutes
     // 12 divisions -> 5.45 minutes
-    // 18 divisions -> 6.05 minutes
-    // 24 divisions -> 5.81 minutes
     // 32 divisions -> Total time: 6.26 minutes
     // 64 divisions -> Total time: 5.86 minutes
-    let content_vec = divide_input(contents_file, Some(64));
-    
+    // Pretty much once you spawn num_cpu threads, performance doesn't increase
+    let content_vec = divide_input(contents_file, Some(num_cpus));
+
     let mut handles: Vec<thread::JoinHandle<HashMap<String, Vec<String>>>> = vec![];
     for group in content_vec {
         let handle = thread::spawn(move || parse_contents(&group.as_str()));
         handles.push(handle);
     }
 
-    let results: Vec<HashMap<String, Vec<String>>> = handles
-        .into_iter()
-        .map(|handle| handle.join().expect("Thread panicked!"))
-        .collect();
+    for handle in handles {
+        handle.join().expect("Thread panicked!");
+    }
 }
