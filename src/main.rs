@@ -2,7 +2,7 @@ use fancy_regex::Regex;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use rusqlite::{params, Connection, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::ops::DerefMut;
@@ -19,19 +19,26 @@ enum State {
 }
 
 fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result<()> {
-    let mut pages_to_links: HashMap<String, Vec<String>> = HashMap::new();
+    // HashMap to store stuff in memory until written to database
+    let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
+
+    // Regex pattern to find links to other wikipedia pages
     let links_regex = Regex::new(
         r"(?<internal>(?<=\[\[)(?!File:)(?!Category:)[\w\(\) -]*(?=|\]\]))|(?<lang>(?<={{etymology\|)[a-z]{1,3})",
     )
     .unwrap();
+
+    // xml reader object
     let mut reader = Reader::from_str(&contents);
     let mut cur_page = String::default();
     let mut cur_state: State = State::IDLE;
     let mut count: u64 = 0;
     let start = Instant::now();
-    // let insert_statement = String::from("BEGIN;");
     loop {
         match reader.read_event() {
+            /*  This will only happen in the case that a thread reads the closing </mediawiki> tag without having read 
+            the opening tag. This is fine because we know we will have read that opening tag in the thread allocated to the
+            first part of the file, so this will indicate to use that the thread is done reading its portion of the file */
             Err(e) => match e {
                 quick_xml::Error::EndEventMismatch { .. } => break,
                 _ => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
@@ -43,7 +50,7 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result
             A self-closed redirect tag indicates that that revision just modified a link to redirect to another article
             We don't care about those. We want pages that don't contain a redirect tag, but because redirect tags always
             come before text tags that contain actual content, we need to check if a redirect came before. That's why
-            State::IGNORE is set whenever encountering a self-closing redirect tag*/
+            State::IGNORE is set whenever encountering a self-closing redirect tag */
             Ok(Event::Start(e)) => match e.name().as_ref() {
                 b"title" => cur_state = State::TITLE,
                 b"text" => match cur_state {
@@ -60,12 +67,25 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result
                 _ => (),
             },
 
-            /* If we hit text while still being in the State::TEXT state, then we'll know that the page is not a
-            redirect and we should parse the content associated with the */
+            /* This event handles all text within the dump file. We only really want to handle text if the cur_state is 
+            State::TITLE (Meaning we just saw a title tag) or State::TEXT (We've hit a text tag and our cur_state is not
+            State::IGNORE). In the former, the text that we read will be the name of the page, in the latter, the text will
+            be the actual content on that page. When reading the content on the page, we use the links_regex to capture all links 
+            to other wikipedia articles. Those links will appear as text surrounded by [[ ]], so the link to Canada will be [[Canada]].
+            Links might also be a part of a sentence and so might not be exactly the name, something like [[canada|the country of canada]]
+            where the stuff after the | is the text, in that case we know that the text before the bar is the title.
+            
+            We'll consider valid wikipedia links to be one of two types. The first is just a regular page link. The second are links to languages
+            like Latin or Arabic in the case that the text links to those pages when explaining a words etymology. For example on the page
+            for Albedo we see (/ælˈbiːdoʊ/ al-BEE-doh; from Latin albedo 'whiteness'). In that case we consider Latin to be a valid link.
+            When matching a language link, it will be appear in the text as an iso 639 code which we'll need to use to determine the language it's referencing.
+            For example Latin has the iso 639 code 'la' so in text it will show up as 'la' not 'Latin' (There are cases where 'Latin' is a link but that's 
+            handled in the first case).
+            */
             Ok(Event::Text(e)) => match cur_state {
                 State::TITLE => {
                     cur_page = String::from(e.unescape().unwrap().into_owned());
-                    pages_to_links.insert(cur_page.clone(), Vec::new());
+                    pages_to_links.insert(cur_page.clone(), HashSet::new());
                     cur_state = State::IDLE;
                 }
                 State::TEXT => {
@@ -84,20 +104,20 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result
                                     Some(val) => pages_to_links
                                         .get_mut(&cur_page)
                                         .unwrap()
-                                        .push(String::from(val.as_str())),
+                                        .insert(String::from(val.as_str())),
                                     // Some(val) => println!("Internal: {}", val.as_str()),
                                     // Some(val) => (),
-                                    None => (),
-                                }
+                                    None => false,
+                                };
                                 match cap.name("lang") {
                                     Some(val) => pages_to_links
                                         .get_mut(&cur_page)
                                         .unwrap()
-                                        .push(String::from(val.as_str())),
+                                        .insert(String::from(val.as_str())),
                                     // Some(val) => println!("Lang: {}", val.as_str()),
                                     // Some(val) => (),
-                                    None => (),
-                                }
+                                    None => false,
+                                };
                             }
                             Err(_c) => break,
                         }
@@ -192,10 +212,13 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
 }
 
 fn main() {
-    let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
+    let total_time_start = Instant::now();
+    let path = "enwiki-latest-pages-articles-multistream1.xml-p1p41242";
+    let contents_file = File::open(&path)
         .expect("Can't find file");
     let num_cpus = available_parallelism().unwrap().get();
     // let initial_connection = Connection::open("test.db").unwrap();
+
     let conn = Arc::new(Mutex::new(Connection::open("test.db").unwrap()));
 
     // 1 division -> 18 minutes
@@ -216,4 +239,6 @@ fn main() {
     for handle in handles {
         let _ = handle.join().expect("Thread panicked!");
     }
+    let total_time_end = total_time_start.elapsed();
+    println!("Processing of {} took {:?}", path, total_time_end);
 }
