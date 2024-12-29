@@ -5,6 +5,8 @@ use rusqlite::{params, Connection, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
 use std::time::Instant;
 
@@ -16,7 +18,7 @@ enum State {
     TEXT,
 }
 
-fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
+fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result<()> {
     let mut pages_to_links: HashMap<String, Vec<String>> = HashMap::new();
     let links_regex = Regex::new(
         r"(?<internal>(?<=\[\[)(?!File:)(?!Category:)[\w\(\) -]*(?=|\]\]))|(?<lang>(?<={{etymology\|)[a-z]{1,3})",
@@ -27,9 +29,8 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
     let mut cur_state: State = State::IDLE;
     let mut count: u64 = 0;
     let start = Instant::now();
+    // let insert_statement = String::from("BEGIN;");
     loop {
-        // Idea, split file into 4 sections of roughly equal size, then have a thread compute each section
-        // xml reader reads each line of xml input
         match reader.read_event() {
             Err(e) => match e {
                 quick_xml::Error::EndEventMismatch { .. } => break,
@@ -113,9 +114,16 @@ fn parse_contents(contents: &str) -> HashMap<String, Vec<String>> {
     let end = start.elapsed();
     println!("Time taken {:?}", end);
     println!("Number of articles processed: {}", count);
+    let connection = db_conn.lock().unwrap();
+    for entry in pages_to_links {
+        let page_title = entry.0;
+        let links = entry.1;
+        connection.execute("insert into PAGES(page_title) values(?1);", params![page_title])?;
+    }
     // count excluding redirects: 21171
     // Time taken 1132.105713876ss
-    pages_to_links
+    // pages_to_links
+    Ok(())
 }
 
 fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
@@ -187,6 +195,8 @@ fn main() {
     let contents_file = File::open("enwiki-latest-pages-articles-multistream1.xml-p1p41242")
         .expect("Can't find file");
     let num_cpus = available_parallelism().unwrap().get();
+    // let initial_connection = Connection::open("test.db").unwrap();
+    let conn = Arc::new(Mutex::new(Connection::open("test.db").unwrap()));
 
     // 1 division -> 18 minutes
     // 6 divisions -> 8 minutes
@@ -196,13 +206,14 @@ fn main() {
     // Pretty much once you spawn num_cpu threads, performance doesn't increase
     let content_vec = divide_input(contents_file, Some(num_cpus));
 
-    let mut handles: Vec<thread::JoinHandle<HashMap<String, Vec<String>>>> = vec![];
+    let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
     for group in content_vec {
-        let handle = thread::spawn(move || parse_contents(&group.as_str()));
+        let conn_clone = Arc::clone(&conn);
+        let handle = thread::spawn(move || parse_and_write_db(&group.as_str(), conn_clone));
         handles.push(handle);
     }
 
     for handle in handles {
-        handle.join().expect("Thread panicked!");
+        let _ = handle.join().expect("Thread panicked!");
     }
 }
