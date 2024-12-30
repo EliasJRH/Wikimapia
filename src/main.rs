@@ -31,7 +31,7 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map:
 
     // Regex pattern to find links to other wikipedia pages
     let links_regex = Regex::new(
-        r"(?<internal>(?<=\[\[)(?!File:)(?!Category:)[\w\(\) -]*(?=|\]\]))|(?<lang>(?<={{etymology\|)[a-z]{1,3})",
+        r"(?<internal>(?<=\[\[)(?!File:)(?!Category:)(?!WP:)[\w\(\) -]*(?=|\]\]))|(?<lang>(?<={{etymology\|)[a-z]{1,3})",
     )
     .unwrap();
 
