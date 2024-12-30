@@ -17,7 +17,15 @@ enum State {
     TEXT,
 }
 
-fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result<()> {
+fn capitalize_first_char(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
+
+fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map: HashMap<String, String>) -> Result<()> {
     // HashMap to store stuff in memory until written to database
     let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -103,7 +111,7 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result
                                     Some(val) => pages_to_links
                                         .get_mut(&cur_page)
                                         .unwrap()
-                                        .insert(String::from(val.as_str())),
+                                        .insert(String::from(capitalize_first_char(val.as_str()))),
                                     // Some(val) => println!("Internal: {}", val.as_str()),
                                     // Some(val) => (),
                                     None => false,
