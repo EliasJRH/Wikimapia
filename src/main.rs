@@ -110,10 +110,16 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result
                                     None => false,
                                 };
                                 match cap.name("lang") {
-                                    Some(val) => pages_to_links
-                                        .get_mut(&cur_page)
-                                        .unwrap()
-                                        .insert(String::from(val.as_str())),
+                                    Some(val) => {
+                                        let lang_code = val.as_str();
+                                        if let Some(lang) = lang_map.get(lang_code) {
+                                            pages_to_links
+                                                .get_mut(&cur_page)
+                                                .unwrap()
+                                                .insert(lang.clone());
+                                        }
+                                        true
+                                    },
                                     // Some(val) => println!("Lang: {}", val.as_str()),
                                     // Some(val) => (),
                                     None => false,
@@ -219,8 +225,24 @@ fn main() {
     let num_cpus = available_parallelism().unwrap().get();
     // let initial_connection = Connection::open("test.db").unwrap();
 
-    let conn = Arc::new(Mutex::new(Connection::open("test.db").unwrap()));
+    let conn = Connection::open("test.db").unwrap();
+    let conn_ref = &conn;
 
+    let mut lang_map: HashMap<String, String> = HashMap::new();
+    let mut stmt = conn_ref.prepare("select * from LANGUAGE_CODES").unwrap();
+    let rows = stmt.query_map([], |row| {
+        let col0: String = row.get(0)?;
+        let col1: String = row.get(1)?;
+        Ok(vec![col0, col1])
+    }).unwrap();
+    for r in rows {
+        let temp = r.unwrap();
+        lang_map.insert(temp[0].clone(), temp[1].clone());
+    }
+    drop (stmt);
+
+    let conn = Arc::new(Mutex::new(conn));
+    
     // 1 division -> 18 minutes
     // 6 divisions -> 8 minutes
     // 12 divisions -> 5.45 minutes
@@ -232,7 +254,8 @@ fn main() {
     let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
     for group in content_vec {
         let conn_clone = Arc::clone(&conn);
-        let handle = thread::spawn(move || parse_and_write_db(&group.as_str(), conn_clone));
+        let lang_map_clone = lang_map.clone();
+        let handle = thread::spawn(move || parse_and_write_db(&group.as_str(), conn_clone, lang_map_clone));
         handles.push(handle);
     }
 
