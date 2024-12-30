@@ -5,7 +5,6 @@ use rusqlite::{params, Connection, Result};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
 use std::time::Instant;
@@ -140,14 +139,35 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>) -> Result
     let end = start.elapsed();
     println!("Time taken {:?}", end);
     println!("Number of articles processed: {}", count);
+
+    /* Once the thread has finished processing its section, it tries to obtain the db connection mutex to start inserting 
+    data from pages_to_links, this is better than having threads try to obtain the mutex while processing its section */
     let connection = db_conn.lock().unwrap();
+
+    // Prepared statements to insert a page title into the PAGES table and get the id from the page after its inserted
+    let mut page_title_insert = connection.prepare("insert into PAGES(page_title) values(?1);").unwrap();
+    let mut get_last_id = connection.prepare("select id from PAGES where page_title = (?1);").unwrap();
+    
     for entry in pages_to_links {
         let page_title = entry.0;
         let links = entry.1;
-        connection.execute("insert into PAGES(page_title) values(?1);", params![page_title])?;
+        /*  This string will be used to execute a batch insert for all links corresponding to an entry, better than executing an
+        insert for every single links */
+        let mut insert_links = String::from("BEGIN;\n"); 
+
+        // Insert the current page title, get its id in the pages database
+        page_title_insert.execute(params![page_title])?;
+        let last_id: i64 = get_last_id.query_row(params![page_title], |row| row.get(0))?;
+
+        // Start building the string for the insert statement then execute
+        for link in links {
+            insert_links.push_str(&format!("insert into LINKS(page_id, link_title) values({}, '{}');\n", last_id, link).to_string());
+        }
+        insert_links.push_str("COMMIT;");
+        let _ = connection.execute_batch(&insert_links);
     }
     // count excluding redirects: 21171
-    // Time taken 1132.105713876ss
+    // Time taken 1132.105713876s
     // pages_to_links
     Ok(())
 }
