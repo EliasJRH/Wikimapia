@@ -3,7 +3,7 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use rusqlite::{params, Connection, Result};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
@@ -25,7 +25,11 @@ fn capitalize_first_char(s: &str) -> String {
     }
 }
 
-fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map: HashMap<String, String>) -> Result<()> {
+fn parse_and_write_db(
+    contents: &str,
+    db_conn: Arc<Mutex<Connection>>,
+    lang_map: HashMap<String, String>,
+) -> Result<()> {
     // HashMap to store stuff in memory until written to database
     let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -43,7 +47,7 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map:
     let start = Instant::now();
     loop {
         match reader.read_event() {
-            /*  This will only happen in the case that a thread reads the closing </mediawiki> tag without having read 
+            /*  This will only happen in the case that a thread reads the closing </mediawiki> tag without having read
             the opening tag. This is fine because we know we will have read that opening tag in the thread allocated to the
             first part of the file, so this will indicate to use that the thread is done reading its portion of the file */
             Err(e) => match e {
@@ -74,19 +78,19 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map:
                 _ => (),
             },
 
-            /* This event handles all text within the dump file. We only really want to handle text if the cur_state is 
+            /* This event handles all text within the dump file. We only really want to handle text if the cur_state is
             State::TITLE (Meaning we just saw a title tag) or State::TEXT (We've hit a text tag and our cur_state is not
             State::IGNORE). In the former, the text that we read will be the name of the page, in the latter, the text will
-            be the actual content on that page. When reading the content on the page, we use the links_regex to capture all links 
+            be the actual content on that page. When reading the content on the page, we use the links_regex to capture all links
             to other wikipedia articles. Those links will appear as text surrounded by [[ ]], so the link to Canada will be [[Canada]].
             Links might also be a part of a sentence and so might not be exactly the name, something like [[canada|the country of canada]]
             where the stuff after the | is the text, in that case we know that the text before the bar is the title.
-            
+
             We'll consider valid wikipedia links to be one of two types. The first is just a regular page link. The second are links to languages
             like Latin or Arabic in the case that the text links to those pages when explaining a words etymology. For example on the page
             for Albedo we see (/ælˈbiːdoʊ/ al-BEE-doh; from Latin albedo 'whiteness'). In that case we consider Latin to be a valid link.
             When matching a language link, it will be appear in the text as an iso 639 code which we'll need to use to determine the language it's referencing.
-            For example Latin has the iso 639 code 'la' so in text it will show up as 'la' not 'Latin' (There are cases where 'Latin' is a link but that's 
+            For example Latin has the iso 639 code 'la' so in text it will show up as 'la' not 'Latin' (There are cases where 'Latin' is a link but that's
             handled in the first case).
             */
             Ok(Event::Text(e)) => match cur_state {
@@ -126,7 +130,7 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map:
                                                 .insert(lang.clone());
                                         }
                                         true
-                                    },
+                                    }
                                     // Some(val) => println!("Lang: {}", val.as_str()),
                                     // Some(val) => (),
                                     None => false,
@@ -148,20 +152,24 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map:
     println!("Time taken {:?}", end);
     println!("Number of articles processed: {}", count);
 
-    /* Once the thread has finished processing its section, it tries to obtain the db connection mutex to start inserting 
+    /* Once the thread has finished processing its section, it tries to obtain the db connection mutex to start inserting
     data from pages_to_links, this is better than having threads try to obtain the mutex while processing its section */
     let connection = db_conn.lock().unwrap();
 
     // Prepared statements to insert a page title into the PAGES table and get the id from the page after its inserted
-    let mut page_title_insert = connection.prepare("insert into PAGES(page_title) values(?1);").unwrap();
-    let mut get_last_id = connection.prepare("select id from PAGES where page_title = (?1);").unwrap();
-    
+    let mut page_title_insert = connection
+        .prepare("insert into PAGES(page_title) values(?1);")
+        .unwrap();
+    let mut get_last_id = connection
+        .prepare("select id from PAGES where page_title = (?1);")
+        .unwrap();
+
     for entry in pages_to_links {
         let page_title = entry.0;
         let links = entry.1;
         /*  This string will be used to execute a batch insert for all links corresponding to an entry, better than executing an
         insert for every single links */
-        let mut insert_links = String::from("BEGIN;\n"); 
+        let mut insert_links = String::from("BEGIN;\n");
 
         // Insert the current page title, get its id in the pages database
         page_title_insert.execute(params![page_title])?;
@@ -169,7 +177,13 @@ fn parse_and_write_db(contents: &str, db_conn: Arc<Mutex<Connection>>, lang_map:
 
         // Start building the string for the insert statement then execute
         for link in links {
-            insert_links.push_str(&format!("insert into LINKS(page_id, link_title) values({}, '{}');\n", last_id, link).to_string());
+            insert_links.push_str(
+                &format!(
+                    "insert into LINKS(page_id, link_title) values({}, '{}');\n",
+                    last_id, link
+                )
+                .to_string(),
+            );
         }
         insert_links.push_str("COMMIT;");
         let _ = connection.execute_batch(&insert_links);
@@ -246,50 +260,58 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
 }
 
 fn main() {
-    let total_time_start = Instant::now();
-    let path = "enwiki-latest-pages-articles-multistream1.xml-p1p41242";
-    let contents_file = File::open(&path)
-        .expect("Can't find file");
-    let num_cpus = available_parallelism().unwrap().get();
-    // let initial_connection = Connection::open("test.db").unwrap();
+    for article in fs::read_dir("dumps").unwrap() {
+        // println!("{:?}", article.unwrap().file_name());
+        let total_time_start = Instant::now();
+        let path = article.unwrap().path();
 
-    let conn = Connection::open("test.db").unwrap();
-    let conn_ref = &conn;
+        println!("Begin processing {:?}", path);
+        let contents_file = File::open(&path).expect("Can't find file");
+        let num_cpus = available_parallelism().unwrap().get();
+        // let initial_connection = Connection::open("test.db").unwrap();
 
-    let mut lang_map: HashMap<String, String> = HashMap::new();
-    let mut stmt = conn_ref.prepare("select * from LANGUAGE_CODES").unwrap();
-    let rows = stmt.query_map([], |row| {
-        let col0: String = row.get(0)?;
-        let col1: String = row.get(1)?;
-        Ok(vec![col0, col1])
-    }).unwrap();
-    for r in rows {
-        let temp = r.unwrap();
-        lang_map.insert(temp[0].clone(), temp[1].clone());
+        let conn = Connection::open("test.db").unwrap();
+        let conn_ref = &conn;
+
+        let mut lang_map: HashMap<String, String> = HashMap::new();
+        let mut stmt = conn_ref.prepare("select * from LANGUAGE_CODES").unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                let col0: String = row.get(0)?;
+                let col1: String = row.get(1)?;
+                Ok(vec![col0, col1])
+            })
+            .unwrap();
+        for r in rows {
+            let temp = r.unwrap();
+            lang_map.insert(temp[0].clone(), temp[1].clone());
+        }
+        drop(stmt);
+
+        let conn = Arc::new(Mutex::new(conn));
+
+        // 1 division -> 18 minutes
+        // 6 divisions -> 8 minutes
+        // 12 divisions -> 5.45 minutes
+        // 32 divisions -> Total time: 6.26 minutes
+        // 64 divisions -> Total time: 5.86 minutes
+        // Pretty much once you spawn num_cpu threads, performance doesn't increase
+        let content_vec = divide_input(contents_file, Some(num_cpus));
+
+        let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
+        for group in content_vec {
+            let conn_clone = Arc::clone(&conn);
+            let lang_map_clone = lang_map.clone();
+            let handle = thread::spawn(move || {
+                parse_and_write_db(&group.as_str(), conn_clone, lang_map_clone)
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            let _ = handle.join().expect("Thread panicked!");
+        }
+        let total_time_end = total_time_start.elapsed();
+        println!("Processing of {:?} took {:?}", path, total_time_end);
     }
-    drop (stmt);
-
-    let conn = Arc::new(Mutex::new(conn));
-    
-    // 1 division -> 18 minutes
-    // 6 divisions -> 8 minutes
-    // 12 divisions -> 5.45 minutes
-    // 32 divisions -> Total time: 6.26 minutes
-    // 64 divisions -> Total time: 5.86 minutes
-    // Pretty much once you spawn num_cpu threads, performance doesn't increase
-    let content_vec = divide_input(contents_file, Some(num_cpus));
-
-    let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
-    for group in content_vec {
-        let conn_clone = Arc::clone(&conn);
-        let lang_map_clone = lang_map.clone();
-        let handle = thread::spawn(move || parse_and_write_db(&group.as_str(), conn_clone, lang_map_clone));
-        handles.push(handle);
-    }
-
-    for handle in handles {
-        let _ = handle.join().expect("Thread panicked!");
-    }
-    let total_time_end = total_time_start.elapsed();
-    println!("Processing of {} took {:?}", path, total_time_end);
 }
