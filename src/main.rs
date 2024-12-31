@@ -378,8 +378,7 @@ fn main() {
         // 64 divisions -> Total time: 5.86 minutes
         // Pretty much once you spawn num_cpu threads, performance doesn't increase
         let content_vec = divide_input(contents_file, Some(num_cpus));
-        let _ = remove_file("decompressed_file.tmp");
-
+        
         let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
         for group in content_vec {
             let conn_clone = Arc::clone(&conn);
@@ -389,7 +388,7 @@ fn main() {
             });
             handles.push(handle);
         }
-
+        
         for handle in handles {
             let _ = handle.join().expect("Thread panicked!");
         }
@@ -397,4 +396,5 @@ fn main() {
         // println!("Processing of {:?} took {:?}", path, total_time_end);
         println!("Processing of {:?} took {:?}", article, total_time_end);
     }
+    let _ = remove_file("/tmp/decompressed_file.tmp");
 }
