@@ -1,10 +1,12 @@
+use bzip2::read::BzDecoder;
 use fancy_regex::Regex;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use rusqlite::{params, Connection, Result};
+use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
 use std::time::Instant;
@@ -259,16 +261,80 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
     content_vec
 }
 
+fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let base_url = "https://dumps.wikimedia.org/enwiki/latest/";
+    let prefix = "enwiki-latest-pages-articles";
+    let suffix = ".bz2";
+
+    // Step 1: Fetch the directory listing
+    println!("Fetching directory listing...");
+    let html = reqwest::blocking::get(base_url)?.text()?;
+
+    // Step 2: Parse the HTML to find files with the given prefix
+    println!("Parsing directory listing...");
+    let document = Html::parse_document(&html);
+    let selector = Selector::parse("a").unwrap();
+    let mut files_to_download = vec![];
+
+    for element in document.select(&selector) {
+        if let Some(href) = element.value().attr("href") {
+            if href.starts_with(prefix)
+                && href.ends_with(suffix)
+                && !href.contains("multistream")
+                && !href.contains("articles.xml")
+            {
+                files_to_download.push(href.to_string());
+            }
+        }
+    }
+    println!("{:?}", files_to_download);
+    Ok(files_to_download)
+}
+
+fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io::Error> {
+    let base_url = "https://dumps.wikimedia.org/enwiki/latest/";
+    let file_url = format!("{}{}", base_url, file_name);
+    let response = reqwest::blocking::get(&file_url).unwrap();
+    if !response.status().is_success() {
+        eprintln!("Failed to download {}: {}", file_url, response.status());
+    }
+    println!("{:?}", response);
+    let compressed_data = response.bytes().unwrap();
+    let cursor = std::io::Cursor::new(compressed_data);
+    let mut decompressor = BzDecoder::new(cursor);
+    let mut decompressed_data = String::new();
+
+    let mut temp_file_path = std::env::temp_dir();
+    temp_file_path.push("decompressed_file.tmp");
+    let mut temp_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temp_file_path).unwrap();
+
+    let mut buffer = Vec::new();
+    decompressor.read_to_end(&mut buffer);
+    temp_file.write_all(&buffer).unwrap();
+    File::open(&temp_file_path)
+    // if let Err(e) = decompressor.read_to_string(&mut decompressed_data) {
+    //     return Err(format!("Failed to decompress {}: {}", file_url, e));
+    // } else {
+    //     return Ok(decompressed_data);
+    // }
+}
+
 fn main() {
+    // let files_to_download = get_files().unwrap();
     for article in fs::read_dir("dumps").unwrap() {
-        // println!("{:?}", article.unwrap().file_name());
+    // for article in files_to_download {
         let total_time_start = Instant::now();
         let path = article.unwrap().path();
 
-        println!("Begin processing {:?}", path);
+        // println!("Begin processing {:?}", article);
         let contents_file = File::open(&path).expect("Can't find file");
+        // let contents_file = download_decompress_save_to_file(&article).unwrap();
+
         let num_cpus = available_parallelism().unwrap().get();
-        // let initial_connection = Connection::open("test.db").unwrap();
 
         let conn = Connection::open("test.db").unwrap();
         let conn_ref = &conn;
@@ -313,5 +379,6 @@ fn main() {
         }
         let total_time_end = total_time_start.elapsed();
         println!("Processing of {:?} took {:?}", path, total_time_end);
+        // println!("Processing of {:?} took {:?}", article, total_time_end);
     }
 }
