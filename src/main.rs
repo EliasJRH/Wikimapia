@@ -352,6 +352,7 @@ fn main() {
         let num_cpus = available_parallelism().unwrap().get();
 
         let conn = Connection::open("test.db").unwrap();
+        let _ = conn.execute("PRAGMA synchronous = OFF;", params![]);
         let conn_ref = &conn;
 
         let mut lang_map: HashMap<String, String> = HashMap::new();
@@ -397,4 +398,5 @@ fn main() {
         println!("Processing of {:?} took {:?}", article, total_time_end);
     }
     let _ = remove_file("/tmp/decompressed_file.tmp");
+    // Total time nearly 8 hours!
 }
