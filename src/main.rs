@@ -5,11 +5,11 @@ use quick_xml::reader::Reader;
 use rusqlite::{params, Connection, Result};
 use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 enum State {
@@ -267,7 +267,7 @@ fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let suffix = ".bz2";
 
     // Step 1: Fetch the directory listing
-    println!("Fetching directory listing...");
+    println!("Fetching directory listing from {}", base_url);
     let html = reqwest::blocking::get(base_url)?.text()?;
 
     // Step 2: Parse the HTML to find files with the given prefix
@@ -287,22 +287,31 @@ fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
             }
         }
     }
-    println!("{:?}", files_to_download);
     Ok(files_to_download)
 }
 
 fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io::Error> {
     let base_url = "https://dumps.wikimedia.org/enwiki/latest/";
     let file_url = format!("{}{}", base_url, file_name);
-    let response = reqwest::blocking::get(&file_url).unwrap();
+    let client = reqwest::blocking::Client::new();
+
+    let start_download = Instant::now();
+    println!("Downloading {}", file_name);
+    let response = client
+        .get(&file_url)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .unwrap();
     if !response.status().is_success() {
         eprintln!("Failed to download {}: {}", file_url, response.status());
     }
-    println!("{:?}", response);
     let compressed_data = response.bytes().unwrap();
+    let end_download = start_download.elapsed();
+    println!("{} downloaded in {:?}", file_name, end_download);
+
+    println!("Decompressing {}", file_name);
     let cursor = std::io::Cursor::new(compressed_data);
     let mut decompressor = BzDecoder::new(cursor);
-    let mut decompressed_data = String::new();
 
     let mut temp_file_path = std::env::temp_dir();
     temp_file_path.push("decompressed_file.tmp");
@@ -310,11 +319,13 @@ fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io:
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&temp_file_path).unwrap();
+        .open(&temp_file_path)
+        .unwrap();
 
     let mut buffer = Vec::new();
-    decompressor.read_to_end(&mut buffer);
+    let _ = decompressor.read_to_end(&mut buffer);
     temp_file.write_all(&buffer).unwrap();
+    println!("{} written to temp file", file_name);
     File::open(&temp_file_path)
     // if let Err(e) = decompressor.read_to_string(&mut decompressed_data) {
     //     return Err(format!("Failed to decompress {}: {}", file_url, e));
@@ -324,15 +335,19 @@ fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io:
 }
 
 fn main() {
-    // let files_to_download = get_files().unwrap();
-    for article in fs::read_dir("dumps").unwrap() {
-    // for article in files_to_download {
+    let files_to_download = get_files().unwrap();
+    println!(
+        "Directory listing contains {} items",
+        files_to_download.len()
+    );
+    // for article in fs::read_dir("dumps").unwrap() {
+    for article in files_to_download {
         let total_time_start = Instant::now();
-        let path = article.unwrap().path();
+        // let path = article.unwrap().path();
 
         // println!("Begin processing {:?}", article);
-        let contents_file = File::open(&path).expect("Can't find file");
-        // let contents_file = download_decompress_save_to_file(&article).unwrap();
+        // let contents_file = File::open(&path).expect("Can't find file");
+        let contents_file = download_decompress_save_to_file(&article).unwrap();
 
         let num_cpus = available_parallelism().unwrap().get();
 
@@ -363,6 +378,7 @@ fn main() {
         // 64 divisions -> Total time: 5.86 minutes
         // Pretty much once you spawn num_cpu threads, performance doesn't increase
         let content_vec = divide_input(contents_file, Some(num_cpus));
+        let _ = remove_file("decompressed_file.tmp");
 
         let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
         for group in content_vec {
@@ -378,7 +394,7 @@ fn main() {
             let _ = handle.join().expect("Thread panicked!");
         }
         let total_time_end = total_time_start.elapsed();
-        println!("Processing of {:?} took {:?}", path, total_time_end);
-        // println!("Processing of {:?} took {:?}", article, total_time_end);
+        // println!("Processing of {:?} took {:?}", path, total_time_end);
+        println!("Processing of {:?} took {:?}", article, total_time_end);
     }
 }
