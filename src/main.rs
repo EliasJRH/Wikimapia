@@ -17,6 +17,7 @@ enum State {
     TITLE,
     IGNORE,
     TEXT,
+    NAMESPACE,
 }
 
 fn capitalize_first_char(s: &str) -> String {
@@ -45,6 +46,7 @@ fn parse_and_write_db(
     let mut reader = Reader::from_str(&contents);
     let mut cur_page = String::default();
     let mut cur_state: State = State::IDLE;
+    let mut ns_num = -1;
     let mut count: u64 = 0;
     let start = Instant::now();
     loop {
@@ -70,6 +72,7 @@ fn parse_and_write_db(
                     State::IGNORE => (),
                     _ => cur_state = State::TEXT,
                 },
+                b"ns" => cur_state = State::NAMESPACE,
                 _ => (),
             },
             Ok(Event::Empty(e)) => match e.name().as_ref() {
@@ -80,13 +83,14 @@ fn parse_and_write_db(
                 _ => (),
             },
 
-            /* This event handles all text within the dump file. We only really want to handle text if the cur_state is
-            State::TITLE (Meaning we just saw a title tag) or State::TEXT (We've hit a text tag and our cur_state is not
-            State::IGNORE). In the former, the text that we read will be the name of the page, in the latter, the text will
-            be the actual content on that page. When reading the content on the page, we use the links_regex to capture all links
-            to other wikipedia articles. Those links will appear as text surrounded by [[ ]], so the link to Canada will be [[Canada]].
-            Links might also be a part of a sentence and so might not be exactly the name, something like [[canada|the country of canada]]
-            where the stuff after the | is the text, in that case we know that the text before the bar is the title.
+            /* This event handles all text within the dump file. We only really want to handle text in a few cases.
+            Either cur_state is State::TITLE (Meaning we just saw a title tag) or State::TEXT (We've hit a text tag and our cur_state is not
+            State::IGNORE) or State::NAMESPACE (We just saw a namespace tag). In the former, the text that we read will 
+            be the name of the page, in the second case its the namespace id in the latter, the text will be the actual content on that page. When reading the content on
+            the page, we use the links_regex to capture all links to other wikipedia articles. Those links will appear as text surrounded 
+            by [[ ]], so the link to Canada will be [[Canada]]. Links might also be a part of a sentence and so might not be exactly the 
+            name, something like [[canada|the country of canada]] where the stuff after the | is the text, in that case we know that the text
+            before the bar is the title.
 
             We'll consider valid wikipedia links to be one of two types. The first is just a regular page link. The second are links to languages
             like Latin or Arabic in the case that the text links to those pages when explaining a words etymology. For example on the page
@@ -94,13 +98,25 @@ fn parse_and_write_db(
             When matching a language link, it will be appear in the text as an iso 639 code which we'll need to use to determine the language it's referencing.
             For example Latin has the iso 639 code 'la' so in text it will show up as 'la' not 'Latin' (There are cases where 'Latin' is a link but that's
             handled in the first case).
+
+            Another thing to mention is Wikipedia namespaces. A namespace is an identifier for a wikipedia page that categorizes it as one of 28 types. One 
+            of these types are normal wikipedia articles but there are also pages for files, help, drafts, and others. We're only concerned with actual 
+            Wikipedia articles who namespace id is 0, everything else we'll ignore. If we see a namespace tag <ns>, cur_state is set to State::NAMESPACE to
+            read the namespace id as text. If the namespace id is anything else but 0, we set cur_state to State::IGNORE similarly to how its done for redirects
             */
             Ok(Event::Text(e)) => match cur_state {
                 State::TITLE => {
                     cur_page = String::from(e.unescape().unwrap().into_owned());
                     pages_to_links.insert(cur_page.clone(), HashSet::new());
                     cur_state = State::IDLE;
-                }
+                },
+                State::NAMESPACE => {
+                    ns_num = e.unescape().unwrap().into_owned().parse().unwrap();
+                    if ns_num != 0 {
+                        cur_state = State::IGNORE;
+                        pages_to_links.remove(&cur_page);
+                    }
+                },
                 State::TEXT => {
                     count += 1;
                     // println!("count: {}", count);
@@ -351,7 +367,7 @@ fn main() {
 
         let num_cpus = available_parallelism().unwrap().get();
 
-        let conn = Connection::open("test.db").unwrap();
+        let conn = Connection::open("main.db").unwrap();
         let _ = conn.execute("PRAGMA synchronous = OFF;", params![]);
         let conn_ref = &conn;
 
