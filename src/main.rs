@@ -118,6 +118,8 @@ fn parse_and_write_db(
                     if ns_num != 0 {
                         cur_state = State::IGNORE;
                         pages_to_links.remove(&cur_page);
+                    }else{
+                        cur_state = State::IDLE;
                     }
                 },
                 State::TEXT => {
