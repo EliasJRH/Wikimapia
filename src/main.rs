@@ -50,7 +50,6 @@ fn parse_and_write_db(
     let mut reader = Reader::from_str(&contents);
     let mut cur_page = String::default();
     let mut cur_state: State = State::IDLE;
-    let mut ns_num = -1;
     let mut count: u64 = 0;
     let start = Instant::now();
     loop {
@@ -115,7 +114,7 @@ fn parse_and_write_db(
                     cur_state = State::IDLE;
                 },
                 State::NAMESPACE => {
-                    ns_num = e.unescape().unwrap().into_owned().parse().unwrap();
+                    let ns_num: i32 = String::from(e.unescape().unwrap().into_owned()).parse().unwrap();
                     if ns_num != 0 {
                         cur_state = State::IGNORE;
                         pages_to_links.remove(&cur_page);
