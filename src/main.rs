@@ -50,7 +50,7 @@ fn parse_and_write_db(
     let mut reader = Reader::from_str(&contents);
     let mut cur_page = String::default();
     let mut cur_state: State = State::IDLE;
-    let mut count: u64 = 0;
+    let mut count: usize = 0;
     let start = Instant::now();
     loop {
         match reader.read_event() {
@@ -88,10 +88,10 @@ fn parse_and_write_db(
 
             /* This event handles all text within the dump file. We only really want to handle text in a few cases.
             Either cur_state is State::TITLE (Meaning we just saw a title tag) or State::TEXT (We've hit a text tag and our cur_state is not
-            State::IGNORE) or State::NAMESPACE (We just saw a namespace tag). In the former, the text that we read will 
-            be the name of the page, in the second case its the namespace id in the latter, the text will be the actual content on that page. When reading the content on
-            the page, we use the links_regex to capture all links to other wikipedia articles. Those links will appear as text surrounded 
-            by [[ ]], so the link to Canada will be [[Canada]]. Links might also be a part of a sentence and so might not be exactly the 
+            State::IGNORE) or State::NAMESPACE (We just saw a namespace tag). In the former, the text that we read will
+            be the name of the page, in the second case its the namespace id and in the latter, the text will be the actual content on that page. When reading the content on
+            the page, we use the links_regex to capture all links to other wikipedia articles. Those links will appear as text surrounded
+            by [[ ]], so the link to Canada will be [[Canada]]. Links might also be a part of a sentence and so might not be exactly the
             name, something like [[canada|the country of canada]] where the stuff after the | is the text, in that case we know that the text
             before the bar is the title.
 
@@ -102,29 +102,32 @@ fn parse_and_write_db(
             For example Latin has the iso 639 code 'la' so in text it will show up as 'la' not 'Latin' (There are cases where 'Latin' is a link but that's
             handled in the first case).
 
-            Another thing to mention is Wikipedia namespaces. A namespace is an identifier for a wikipedia page that categorizes it as one of 28 types. One 
-            of these types are normal wikipedia articles but there are also pages for files, help, drafts, and others. We're only concerned with actual 
+            Another thing to mention is Wikipedia namespaces. A namespace is an identifier for a wikipedia page that categorizes it as one of 28 types. One
+            of these types are normal wikipedia articles but there are also pages for files, help, drafts, and others. We're only concerned with actual
             Wikipedia articles who namespace id is 0, everything else we'll ignore. If we see a namespace tag <ns>, cur_state is set to State::NAMESPACE to
             read the namespace id as text. If the namespace id is anything else but 0, we set cur_state to State::IGNORE similarly to how its done for redirects
+
+            Namespaces also have their own internal link structure, so the link regex also checks to make sure that we're not capturing those as well
             */
             Ok(Event::Text(e)) => match cur_state {
                 State::TITLE => {
                     cur_page = String::from(e.unescape().unwrap().into_owned());
                     pages_to_links.insert(cur_page.clone(), HashSet::new());
                     cur_state = State::IDLE;
-                },
+                }
                 State::NAMESPACE => {
-                    let ns_num: i32 = String::from(e.unescape().unwrap().into_owned()).parse().unwrap();
+                    let ns_num: i32 = String::from(e.unescape().unwrap().into_owned())
+                        .parse()
+                        .unwrap();
                     if ns_num != 0 {
                         cur_state = State::IGNORE;
                         pages_to_links.remove(&cur_page);
-                    }else{
+                    } else {
                         cur_state = State::IDLE;
                     }
-                },
+                }
                 State::TEXT => {
                     count += 1;
-                    // println!("count: {}", count);
                     let cur_text = String::from(e.unescape().unwrap().into_owned());
                     let mut captures = links_regex.captures_iter(&cur_text);
                     loop {
@@ -171,6 +174,7 @@ fn parse_and_write_db(
             _ => (),
         }
     }
+    assert_eq!(count, pages_to_links.len());
     let end = start.elapsed();
     println!("Time taken {:?}", end);
     println!("Number of articles processed: {}", count);
@@ -211,9 +215,10 @@ fn parse_and_write_db(
         insert_links.push_str("COMMIT;");
         let _ = connection.execute_batch(&insert_links);
     }
-    // count excluding redirects: 21171
-    // Time taken 1132.105713876s
-    // pages_to_links
+    let last_count: i64 = connection
+        .query_row("select count(id) from pages;", [], |row| row.get(0))
+        .unwrap();
+    println!("Count after writing: {}", last_count);
     Ok(())
 }
 
@@ -348,11 +353,6 @@ fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io:
     temp_file.write_all(&buffer).unwrap();
     println!("{} written to temp file", file_name);
     File::open(&temp_file_path)
-    // if let Err(e) = decompressor.read_to_string(&mut decompressed_data) {
-    //     return Err(format!("Failed to decompress {}: {}", file_url, e));
-    // } else {
-    //     return Ok(decompressed_data);
-    // }
 }
 
 fn main() {
@@ -361,13 +361,8 @@ fn main() {
         "Directory listing contains {} items",
         files_to_download.len()
     );
-    // for article in fs::read_dir("dumps").unwrap() {
     for article in files_to_download {
         let total_time_start = Instant::now();
-        // let path = article.unwrap().path();
-
-        // println!("Begin processing {:?}", article);
-        // let contents_file = File::open(&path).expect("Can't find file");
         let contents_file = download_decompress_save_to_file(&article).unwrap();
 
         let num_cpus = available_parallelism().unwrap().get();
@@ -391,7 +386,7 @@ fn main() {
         }
         drop(stmt);
 
-        let conn = Arc::new(Mutex::new(conn));
+        let conn_mutex = Arc::new(Mutex::new(conn));
 
         // 1 division -> 18 minutes
         // 6 divisions -> 8 minutes
@@ -400,24 +395,37 @@ fn main() {
         // 64 divisions -> Total time: 5.86 minutes
         // Pretty much once you spawn num_cpu threads, performance doesn't increase
         let content_vec = divide_input(contents_file, Some(num_cpus));
-        
+
         let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
         for group in content_vec {
-            let conn_clone = Arc::clone(&conn);
+            let conn_clone = Arc::clone(&conn_mutex);
             let lang_map_clone = lang_map.clone();
             let handle = thread::spawn(move || {
                 parse_and_write_db(&group.as_str(), conn_clone, lang_map_clone)
             });
             handles.push(handle);
         }
-        
+
         for handle in handles {
             let _ = handle.join().expect("Thread panicked!");
         }
+
+        // Ensure all changes are committed
+        {
+            let connection = conn_mutex.lock().unwrap();
+            let _ = connection.execute_batch("COMMIT;");
+        }
+
         let total_time_end = total_time_start.elapsed();
         // println!("Processing of {:?} took {:?}", path, total_time_end);
         println!("Processing of {:?} took {:?}", article, total_time_end);
+        let check_conn = Connection::open("main.db").unwrap();
+        let last_count: i64 = check_conn
+            .query_row("select count(id) from pages;", [], |row| row.get(0))
+            .unwrap();
+        println!("Count after writing: {}", last_count);
     }
     let _ = remove_file("/tmp/decompressed_file.tmp");
     // Total time nearly 8 hours!
+    // Total time only processing articles roughly 6 hours
 }
