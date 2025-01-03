@@ -1,5 +1,5 @@
 use bzip2::read::BzDecoder;
-use fancy_regex::Regex;
+use fancy_regex::RegexBuilder;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use rusqlite::{params, Connection, Result};
@@ -37,9 +37,13 @@ fn parse_and_write_db(
     let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
 
     // Regex pattern to find links to other wikipedia pages
-    let links_regex = Regex::new(
-        r"(?<internal>(?<=\[\[)(?!File:)(?!Category:)(?!WP:)[\w\(\) -]*(?=|\]\]))|(?<lang>(?<={{etymology\|)[a-z]{1,3})",
-    )
+    // This will haunt me in my dreams
+    // This regex matches two groups
+    /* The first is a raw internal link. A raw internal link is a sequence of characters starts with [[ (not captured), does not begin with any namespace
+    title optionally followed by " talk" followed by any character (without a separating space), contains any character except for | or ] and ends with ]] (not captured)*/
+    let links_regex = RegexBuilder::new(
+        r"(?<internal>(?<=\[\[)(?!:?(?:user|wikipedia|wp|project|file|image|mediawiki|template|tm|help|category|portal|draft|timedtext|module|mos|special|media)( talk)?:[A-z])[^|\]]*(?=|\]\]))|((?<={{etymology\|)[a-z]{1,3})",
+    ).case_insensitive(true).build()
     .unwrap();
 
     // xml reader object
