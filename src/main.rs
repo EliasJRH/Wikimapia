@@ -187,44 +187,51 @@ fn parse_and_write_db(
 
     /* Once the thread has finished processing its section, it tries to obtain the db connection mutex to start inserting
     data from pages_to_links, this is better than having threads try to obtain the mutex while processing its section */
-    let connection = db_conn.lock().unwrap();
-
-    // Prepared statements to insert a page title into the PAGES table and get the id from the page after its inserted
-    let mut page_title_insert = connection
-        .prepare("insert into PAGES(page_title) values(?1);")
-        .unwrap();
-    let mut get_last_id = connection
-        .prepare("select id from PAGES where page_title = (?1);")
-        .unwrap();
+    let mut connection = db_conn.lock().unwrap();
 
     for entry in pages_to_links {
         let page_title = entry.0;
         let links = entry.1;
-        /*  This string will be used to execute a batch insert for all links corresponding to an entry, better than executing an
-        insert for every single links */
-        let mut insert_links = String::from("BEGIN;\n");
+
+        // Prepared statements to insert a page title into the PAGES table and get the id from the page after its inserted
+        let mut page_title_insert = connection
+            .prepare("insert into PAGES(page_title) values(?1);")
+            .unwrap();
+        let mut get_last_id = connection
+            .prepare("select id from PAGES where page_title = (?1);")
+            .unwrap();
 
         // Insert the current page title, get its id in the pages database
         page_title_insert.execute(params![page_title])?;
         let last_id: i64 = get_last_id.query_row(params![page_title], |row| row.get(0))?;
 
-        // Start building the string for the insert statement then execute
+        drop(page_title_insert);
+        drop(get_last_id);
+
+        let insert_page_title_tx = connection.transaction().unwrap();
+
+        let mut insert_page_stmt = (&insert_page_title_tx)
+            .prepare("insert into LINKS(page_id, link_title) values(?1, ?2);")
+            .unwrap();
+
         for link in links {
-            insert_links.push_str(
-                &format!(
-                    "insert into LINKS(page_id, link_title) values({}, '{}');\n",
-                    last_id, link
-                )
-                .to_string(),
-            );
+            let res = insert_page_stmt.execute(params![last_id, link]);
+            match res {
+                Ok(_) => (),
+                Err(e) => eprintln!(
+                    "Error inserting link {} for page {}: {}",
+                    link, page_title, e
+                ),
+            }
         }
-        insert_links.push_str("COMMIT;");
-        let _ = connection.execute_batch(&insert_links);
+        drop(insert_page_stmt);
+
+        let res = insert_page_title_tx.commit();
+        match res {
+            Ok(_) => (),
+            Err(e) => eprintln!("Error inserting links for page {}: {}", page_title, e),
+        }
     }
-    let last_count: i64 = connection
-        .query_row("select count(id) from pages;", [], |row| row.get(0))
-        .unwrap();
-    println!("Count after writing: {}", last_count);
     Ok(())
 }
 
@@ -430,4 +437,6 @@ fn main() {
     println!("Processing all Wikipedia sections took: {}", total_time_end);
     // Total time nearly 8 hours!
     // Total time only processing articles roughly 6 hours
+    // Maybe I'm an idiot???
+    // println!("Processing of {:?} took {:?}", path, article_time_end);
 }
