@@ -430,11 +430,17 @@ fn main() {
 
         let section_time_end = section_time_start.elapsed();
         sections_processed += 1;
-        println!("Processing of {} took {:?}. Sections processed: {}/{}", section, section_time_end, sections_processed, num_sections);
+        println!(
+            "Processing of {} took {:?}. Sections processed: {}/{}",
+            section, section_time_end, sections_processed, num_sections
+        );
     }
     let _ = remove_file("/tmp/decompressed_file.tmp");
     let total_time_end = total_time_start.elapsed();
-    println!("Processing all Wikipedia sections took: {}", total_time_end);
+    println!(
+        "Processing all Wikipedia sections took: {:?}",
+        total_time_end
+    );
     // Total time nearly 8 hours!
     // Total time only processing articles roughly 6 hours
     // Maybe I'm an idiot???
