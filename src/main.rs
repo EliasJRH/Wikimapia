@@ -36,15 +36,20 @@ fn parse_and_write_db(
     // HashMap to store stuff in memory until written to database
     let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
 
-    // Regex pattern to find links to other wikipedia pages
-    // This will haunt me in my dreams
-    // This regex matches two groups
-    /* The first is a raw internal link. A raw internal link is a sequence of characters starts with [[ (not captured), does not begin with any namespace
-    title optionally followed by " talk" followed by any character (without a separating space), contains any character except for | or ] and ends with ]] (not captured)*/
+    // Regex to find internal wikipedia links and links to language pages
+    // Internal wikipedia links look like [[text]], language links look like {{etymology|<language code>
+    // The language code is looked up to find the name of the languages article
     let links_regex = RegexBuilder::new(
-        r"(?<internal>(?<=\[\[)(?!:?(?:user|wikipedia|wp|project|file|image|mediawiki|template|tm|help|category|portal|draft|timedtext|module|mos|special|media)( talk)?:[A-z])[^|\]]*(?=|\]\]))|((?<={{etymology\|)[a-z]{1,3})",
-    ).case_insensitive(true).build()
+        r"(\[\[[A-Za-z0-9 .,:()'&+-/|{}=?\u0080-\uFFFF]+\]\])|(\{\{etymology\|[a-z]{1,3})",
+    )
+    .case_insensitive(true)
+    .build()
     .unwrap();
+
+    let namespace_regex = RegexBuilder::new(r"\w*:\S\w*")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
 
     // xml reader object
     let mut reader = Reader::from_str(&contents);
