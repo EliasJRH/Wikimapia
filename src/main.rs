@@ -1,7 +1,7 @@
 use bzip2::read::BzDecoder;
-use fancy_regex::RegexBuilder;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
+use regex::{Regex, RegexBuilder};
 use rusqlite::{params, Connection, Result};
 use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet};
@@ -26,6 +26,20 @@ fn capitalize_first_char(s: &str) -> String {
         None => String::new(),
         Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
     }
+}
+
+fn process_article_name<'a>(name: &'a str, _namespace_regex: &Regex) -> Option<&'a str> {
+    if name.starts_with(":") {
+        return None;
+    }
+    let mut split = name.split("|");
+    if let Some(processed_name) = split.next() {
+        if _namespace_regex.is_match(&(processed_name.split(" ").next().unwrap())) {
+            return None;
+        }
+        return Some(&processed_name);
+    }
+    return None;
 }
 
 fn parse_and_write_db(
@@ -134,40 +148,27 @@ fn parse_and_write_db(
                 State::TEXT => {
                     count += 1;
                     let cur_text = String::from(e.unescape().unwrap().into_owned());
-                    let mut captures = links_regex.captures_iter(&cur_text);
-                    loop {
-                        let first = captures.next();
-                        if first.is_none() {
-                            break;
-                        }
-                        match first.unwrap() {
-                            Ok(cap) => {
-                                match cap.name("internal") {
-                                    Some(val) => pages_to_links
-                                        .get_mut(&cur_page)
-                                        .unwrap()
-                                        .insert(String::from(capitalize_first_char(val.as_str()))),
-                                    // Some(val) => println!("Internal: {}", val.as_str()),
-                                    // Some(val) => (),
-                                    None => false,
-                                };
-                                match cap.name("lang") {
-                                    Some(val) => {
-                                        let lang_code = val.as_str();
-                                        if let Some(lang) = lang_map.get(lang_code) {
-                                            pages_to_links
-                                                .get_mut(&cur_page)
-                                                .unwrap()
-                                                .insert(lang.clone());
-                                        }
-                                        true
-                                    }
-                                    // Some(val) => println!("Lang: {}", val.as_str()),
-                                    // Some(val) => (),
-                                    None => false,
-                                };
+                    let captures = links_regex.captures_iter(&cur_text);
+                    for cap in captures {
+                        if let Some(val) = cap.get(1) {
+                            let name_slice = &val.as_str()[2..val.len() - 2];
+                            if let Some(article_name) =
+                                process_article_name(name_slice, &namespace_regex)
+                            {
+                                pages_to_links
+                                    .get_mut(&cur_page)
+                                    .unwrap()
+                                    .insert(String::from(capitalize_first_char(article_name)));
                             }
-                            Err(_c) => break,
+                        }
+                        if let Some(val) = cap.get(2) {
+                            let lang_code = &val.as_str()[12..];
+                            if let Some(lang_name) = lang_map.get(lang_code) {
+                                pages_to_links
+                                    .get_mut(&cur_page)
+                                    .unwrap()
+                                    .insert(lang_name.clone());
+                            }
                         }
                     }
                     cur_state = State::IDLE;
