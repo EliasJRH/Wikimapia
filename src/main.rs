@@ -356,12 +356,15 @@ fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io:
 }
 
 fn main() {
+    let total_time_start = Instant::now();
     let files_to_download = get_files().unwrap();
-    println!(
-        "Directory listing contains {} items",
-        files_to_download.len()
-    );
+    let num_sections = files_to_download.len();
+    println!("Directory listing contains {} items", num_sections);
 
+    /* Some pre-initialization stuff, figure out how much cpus are available for
+    multi-threading, store the language_codes table into memory so it can be used
+    by threads */
+    let mut sections_processed = 0;
     let num_cpus = available_parallelism().unwrap().get();
     let db_path = "main2.db";
 
@@ -382,9 +385,9 @@ fn main() {
         lang_map.insert(temp[0].clone(), temp[1].clone());
     }
 
-    for article in files_to_download {
-        let article_time_start = Instant::now();
-        let contents_file = download_decompress_save_to_file(&article).unwrap();
+    for section in files_to_download {
+        let section_time_start = Instant::now();
+        let contents_file = download_decompress_save_to_file(&section).unwrap();
 
         let connection = Connection::open(db_path).unwrap();
         let _ = connection.execute("PRAGMA synchronous = OFF;", params![]);
@@ -412,22 +415,13 @@ fn main() {
             let _ = handle.join().expect("Thread panicked!");
         }
 
-        // Ensure all changes are committed
-        {
-            let connection = conn_mutex.lock().unwrap();
-            let _ = connection.execute_batch("COMMIT;");
-        }
-
-        let total_time_end = total_time_start.elapsed();
-        // println!("Processing of {:?} took {:?}", path, total_time_end);
-        println!("Processing of {:?} took {:?}", article, total_time_end);
-        let check_conn = Connection::open("main.db").unwrap();
-        let last_count: i64 = check_conn
-            .query_row("select count(id) from pages;", [], |row| row.get(0))
-            .unwrap();
-        println!("Count after writing: {}", last_count);
+        let section_time_end = section_time_start.elapsed();
+        sections_processed += 1;
+        println!("Processing of {} took {:?}. Sections processed: {}/{}", section, section_time_end, sections_processed, num_sections);
     }
     let _ = remove_file("/tmp/decompressed_file.tmp");
+    let total_time_end = total_time_start.elapsed();
+    println!("Processing all Wikipedia sections took: {}", total_time_end);
     // Total time nearly 8 hours!
     // Total time only processing articles roughly 6 hours
 }
