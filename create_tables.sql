@@ -14,3 +14,5 @@ create table LINKS (
   link_title text not null,
   foreign key (page_id) references PAGES(id)
 );
+
+create index idx_links_page_id on LINKS(page_id);
