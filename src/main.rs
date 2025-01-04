@@ -361,32 +361,34 @@ fn main() {
         "Directory listing contains {} items",
         files_to_download.len()
     );
+
+    let num_cpus = available_parallelism().unwrap().get();
+    let db_path = "main2.db";
+
+    let setup_connection = Connection::open(db_path).unwrap();
+    let conn_ref = &setup_connection;
+
+    let mut lang_map: HashMap<String, String> = HashMap::new();
+    let mut stmt = conn_ref.prepare("select * from LANGUAGE_CODES").unwrap();
+    let rows = stmt
+        .query_map([], |row| {
+            let col0: String = row.get(0)?;
+            let col1: String = row.get(1)?;
+            Ok(vec![col0, col1])
+        })
+        .unwrap();
+    for r in rows {
+        let temp = r.unwrap();
+        lang_map.insert(temp[0].clone(), temp[1].clone());
+    }
+
     for article in files_to_download {
-        let total_time_start = Instant::now();
+        let article_time_start = Instant::now();
         let contents_file = download_decompress_save_to_file(&article).unwrap();
 
-        let num_cpus = available_parallelism().unwrap().get();
-
-        let conn = Connection::open("main.db").unwrap();
-        let _ = conn.execute("PRAGMA synchronous = OFF;", params![]);
-        let conn_ref = &conn;
-
-        let mut lang_map: HashMap<String, String> = HashMap::new();
-        let mut stmt = conn_ref.prepare("select * from LANGUAGE_CODES").unwrap();
-        let rows = stmt
-            .query_map([], |row| {
-                let col0: String = row.get(0)?;
-                let col1: String = row.get(1)?;
-                Ok(vec![col0, col1])
-            })
-            .unwrap();
-        for r in rows {
-            let temp = r.unwrap();
-            lang_map.insert(temp[0].clone(), temp[1].clone());
-        }
-        drop(stmt);
-
-        let conn_mutex = Arc::new(Mutex::new(conn));
+        let connection = Connection::open(db_path).unwrap();
+        let _ = connection.execute("PRAGMA synchronous = OFF;", params![]);
+        let conn_mutex = Arc::new(Mutex::new(connection));
 
         // 1 division -> 18 minutes
         // 6 divisions -> 8 minutes
