@@ -379,10 +379,15 @@ fn main() {
     by threads */
     let mut sections_processed = 0;
     let num_cpus = available_parallelism().unwrap().get();
-    let db_path = "main2.db";
+    let db_path = "main.db";
 
     let setup_connection = Connection::open(db_path).unwrap();
     let conn_ref = &setup_connection;
+
+    let create_tables = std::fs::read_to_string("create_tables.sql").unwrap();
+    let language_codes = std::fs::read_to_string("language_codes.sql").unwrap();
+    conn_ref.execute_batch(&create_tables).unwrap();
+    conn_ref.execute_batch(&language_codes).unwrap();
 
     let mut lang_map: HashMap<String, String> = HashMap::new();
     let mut stmt = conn_ref.prepare("select * from LANGUAGE_CODES").unwrap();
@@ -437,6 +442,8 @@ fn main() {
     }
     let _ = remove_file("/tmp/decompressed_file.tmp");
     let total_time_end = total_time_start.elapsed();
+    let create_indexes = std::fs::read_to_string("create_indexes.sql").unwrap();
+    conn_ref.execute_batch(&create_indexes).unwrap();
     println!(
         "Processing all Wikipedia sections took: {:?}",
         total_time_end

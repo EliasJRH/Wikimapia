@@ -5,8 +5,7 @@ create table LANGUAGE_CODES (
   lang_page text not null
 );
 
-create unique index idx_lang_codes on LANGUAGE_CODES(code);
-
+BEGIN;
 INSERT INTO LANGUAGE_CODES VALUES('ab', 'Abkhaz language');
 INSERT INTO LANGUAGE_CODES VALUES('abk', 'Abkhaz language');
 INSERT INTO LANGUAGE_CODES VALUES('aa', 'Afar language');
@@ -381,4 +380,5 @@ INSERT INTO LANGUAGE_CODES VALUES('za', 'Zhuang languages');
 INSERT INTO LANGUAGE_CODES VALUES('zha', 'Zhuang languages');
 INSERT INTO LANGUAGE_CODES VALUES('zu', 'Zulu language');
 INSERT INTO LANGUAGE_CODES VALUES('zul', 'Zulu language');
-
+COMMIT;
+create unique index idx_lang_codes on LANGUAGE_CODES(code);
