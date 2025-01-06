@@ -49,6 +49,7 @@ fn parse_and_write_db(
 ) -> Result<()> {
     // HashMap to store stuff in memory until written to database
     let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut redirects_to_pages: HashMap<String, String> = HashMap::new();
 
     // Regex to find internal wikipedia links and links to language pages
     // Internal wikipedia links look like [[text]], language links look like {{etymology|<language code>
@@ -101,6 +102,15 @@ fn parse_and_write_db(
                 b"redirect" => {
                     cur_state = State::IGNORE;
                     pages_to_links.remove(&cur_page);
+                    if let Some(attribute) = e.attributes().next() {
+                        let redirect_title = String::from(
+                            attribute
+                                .unwrap()
+                                .decode_and_unescape_value(&reader)
+                                .unwrap(),
+                        );
+                        redirects_to_pages.insert(cur_page.clone(), redirect_title);
+                    }
                 }
                 _ => (),
             },
@@ -232,6 +242,33 @@ fn parse_and_write_db(
             Err(e) => eprintln!("Error inserting links for page {}: {}", page_title, e),
         }
     }
+    let insert_redirects_tx = connection.transaction().unwrap();
+    let mut insert_redirects_stmt = (&insert_redirects_tx)
+        .prepare("insert into REDIRECTS(page_title, redirect_title) values (?1, ?2)")
+        .unwrap();
+
+    for redirect in redirects_to_pages {
+        let page_title = redirect.0;
+        let redirect_title = redirect.1;
+
+        let res = insert_redirects_stmt.execute(params![page_title, redirect_title]);
+        match res {
+            Ok(_) => (),
+            Err(e) => eprintln!(
+            "Error inserting redirect {} for page {}: {}",
+            redirect_title, page_title, e
+            ),
+        }
+    }
+
+    drop(insert_redirects_stmt);
+
+    let res = insert_redirects_tx.commit();
+    match res {
+        Ok(_) => (),
+        Err(e) => eprintln!("Error inserting redirects: {}", e),
+    }
+
     Ok(())
 }
 
