@@ -43,6 +43,7 @@ fn process_article_name<'a>(name: &'a str, _namespace_regex: &Regex) -> Option<&
 }
 
 fn parse_and_write_db(
+    thread_id: usize,
     contents: &str,
     db_conn: Arc<Mutex<Connection>>,
     lang_map: HashMap<String, String>,
@@ -255,8 +256,8 @@ fn parse_and_write_db(
         match res {
             Ok(_) => (),
             Err(e) => eprintln!(
-            "Error inserting redirect {} for page {}: {}",
-            redirect_title, page_title, e
+                "Error inserting redirect {} for page {}: {}",
+                redirect_title, page_title, e
             ),
         }
     }
@@ -405,7 +406,7 @@ fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io:
     File::open(&temp_file_path)
 }
 
-fn main() {
+fn seed_db() -> Result<()> {
     let total_time_start = Instant::now();
     let files_to_download = get_files().unwrap();
     let num_sections = files_to_download.len();
@@ -457,11 +458,11 @@ fn main() {
         let content_vec = divide_input(contents_file, Some(num_cpus));
 
         let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
-        for group in content_vec {
+        for (i, group) in content_vec.into_iter().enumerate() {
             let conn_clone = Arc::clone(&conn_mutex);
             let lang_map_clone = lang_map.clone();
             let handle = thread::spawn(move || {
-                parse_and_write_db(&group.as_str(), conn_clone, lang_map_clone)
+                parse_and_write_db(i, &group.as_str(), conn_clone, lang_map_clone)
             });
             handles.push(handle);
         }
@@ -489,4 +490,59 @@ fn main() {
     // Total time only processing articles roughly 6 hours
     // Maybe I'm an idiot???
     // println!("Processing of {:?} took {:?}", path, article_time_end);
+    Ok(())
+}
+
+fn check_for_page(page_name: &str) -> Result<String> {
+    let check_conn = Connection::open("main.db").unwrap();
+    check_conn.query_row("select * from PAGES where page_title = (?1)", params![page_name], |row| row.get(1))
+}
+
+fn main() {
+    println!("Wikimapia v0.1.0. Enter 'h' for list of commands");
+    loop {
+        print!("> ");
+        std::io::stdout().flush().unwrap();
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+
+        match input {
+            "h" => {
+                println!("h          Displays this message");
+                println!("reseed     Re seeds database of connections");
+                println!("search     Starts shortest path search between articles");
+                println!("exit       Exits application")
+            }
+            "reseed" => {
+                if let Err(e) = seed_db() {
+                    eprintln!("Error seeding database: {}", e);
+                }
+            }
+            "search" => {
+                print!("Enter start page: ");
+                std::io::stdout().flush().unwrap();
+                let mut start_page = String::new();
+                std::io::stdin().read_line(&mut start_page).unwrap();
+                let start_page = start_page.trim();
+                if let Err(e) = check_for_page(start_page){
+                    eprintln!("Page {} doesn't exist: {}", start_page, e);
+                    continue;
+                }
+
+                print!("Enter end page: ");
+                std::io::stdout().flush().unwrap();
+                let mut end_page = String::new();
+                std::io::stdin().read_line(&mut end_page).unwrap();
+                let end_page = end_page.trim();
+                if let Err(e) = check_for_page(end_page){
+                    eprintln!("Page {} doesn't exist: {}", end_page, e);
+                    continue;
+                }
+                
+            }
+            "exit" => break,
+            _ => println!("Invalid input, enter 'h' for list of commands."),
+        }
+    }
 }
