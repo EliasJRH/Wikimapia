@@ -4,12 +4,14 @@ use quick_xml::reader::Reader;
 use regex::{Regex, RegexBuilder};
 use rusqlite::{params, Connection, Result};
 use scraper::{Html, Selector};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::f64::INFINITY;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
 use std::time::{Duration, Instant};
+use std::usize;
 
 #[derive(Debug)]
 enum State {
@@ -49,6 +51,7 @@ fn parse_and_write_db(
 ) -> Result<()> {
     // HashMap to store stuff in memory until written to database
     let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut redirects_to_pages: HashMap<String, String> = HashMap::new();
 
     // Regex to find internal wikipedia links and links to language pages
     // Internal wikipedia links look like [[text]], language links look like {{etymology|<language code>
@@ -101,6 +104,15 @@ fn parse_and_write_db(
                 b"redirect" => {
                     cur_state = State::IGNORE;
                     pages_to_links.remove(&cur_page);
+                    if let Some(attribute) = e.attributes().next() {
+                        let redirect_title = String::from(
+                            attribute
+                                .unwrap()
+                                .decode_and_unescape_value(&reader)
+                                .unwrap(),
+                        );
+                        redirects_to_pages.insert(cur_page.clone(), redirect_title);
+                    }
                 }
                 _ => (),
             },
@@ -232,6 +244,33 @@ fn parse_and_write_db(
             Err(e) => eprintln!("Error inserting links for page {}: {}", page_title, e),
         }
     }
+    let insert_redirects_tx = connection.transaction().unwrap();
+    let mut insert_redirects_stmt = (&insert_redirects_tx)
+        .prepare("insert into REDIRECTS(page_title, redirect_title) values (?1, ?2)")
+        .unwrap();
+
+    for redirect in redirects_to_pages {
+        let page_title = redirect.0;
+        let redirect_title = redirect.1;
+
+        let res = insert_redirects_stmt.execute(params![page_title, redirect_title]);
+        match res {
+            Ok(_) => (),
+            Err(e) => eprintln!(
+            "Error inserting redirect {} for page {}: {}",
+            redirect_title, page_title, e
+            ),
+        }
+    }
+
+    drop(insert_redirects_stmt);
+
+    let res = insert_redirects_tx.commit();
+    match res {
+        Ok(_) => (),
+        Err(e) => eprintln!("Error inserting redirects: {}", e),
+    }
+
     Ok(())
 }
 
@@ -300,7 +339,7 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
     content_vec
 }
 
-fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn get_files() -> Result<VecDeque<String>, Box<dyn std::error::Error>> {
     let base_url = "https://dumps.wikimedia.org/enwiki/latest/";
     let prefix = "enwiki-latest-pages-articles";
     let suffix = ".bz2";
@@ -313,7 +352,7 @@ fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     println!("Parsing directory listing...");
     let document = Html::parse_document(&html);
     let selector = Selector::parse("a").unwrap();
-    let mut files_to_download = vec![];
+    let mut files_to_download = VecDeque::new();
 
     for element in document.select(&selector) {
         if let Some(href) = element.value().attr("href") {
@@ -322,7 +361,7 @@ fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
                 && !href.contains("multistream")
                 && !href.contains("articles.xml")
             {
-                files_to_download.push(href.to_string());
+                files_to_download.push_front(href.to_string());
             }
         }
     }
@@ -370,7 +409,7 @@ fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io:
 
 fn main() {
     let total_time_start = Instant::now();
-    let files_to_download = get_files().unwrap();
+    let mut files_to_download = get_files().unwrap();
     let num_sections = files_to_download.len();
     println!("Directory listing contains {} items", num_sections);
 
