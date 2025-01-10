@@ -4,12 +4,14 @@ use quick_xml::reader::Reader;
 use regex::{Regex, RegexBuilder};
 use rusqlite::{params, Connection, Result};
 use scraper::{Html, Selector};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::f64::INFINITY;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
 use std::time::{Duration, Instant};
+use std::usize;
 
 #[derive(Debug)]
 enum State {
@@ -338,7 +340,7 @@ fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
     content_vec
 }
 
-fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn get_files() -> Result<VecDeque<String>, Box<dyn std::error::Error>> {
     let base_url = "https://dumps.wikimedia.org/enwiki/latest/";
     let prefix = "enwiki-latest-pages-articles";
     let suffix = ".bz2";
@@ -351,7 +353,7 @@ fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     println!("Parsing directory listing...");
     let document = Html::parse_document(&html);
     let selector = Selector::parse("a").unwrap();
-    let mut files_to_download = vec![];
+    let mut files_to_download = VecDeque::new();
 
     for element in document.select(&selector) {
         if let Some(href) = element.value().attr("href") {
@@ -360,7 +362,7 @@ fn get_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
                 && !href.contains("multistream")
                 && !href.contains("articles.xml")
             {
-                files_to_download.push(href.to_string());
+                files_to_download.push_front(href.to_string());
             }
         }
     }
@@ -408,7 +410,7 @@ fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io:
 
 fn seed_db() -> Result<()> {
     let total_time_start = Instant::now();
-    let files_to_download = get_files().unwrap();
+    let mut files_to_download = get_files().unwrap();
     let num_sections = files_to_download.len();
     println!("Directory listing contains {} items", num_sections);
 
