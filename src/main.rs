@@ -5,7 +5,6 @@ use regex::{Regex, RegexBuilder};
 use rusqlite::{params, Connection, Result};
 use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::f64::INFINITY;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
@@ -497,7 +496,162 @@ fn seed_db() -> Result<()> {
 
 fn check_for_page(page_name: &str) -> Result<String> {
     let check_conn = Connection::open("main.db").unwrap();
-    check_conn.query_row("select * from PAGES where page_title = (?1)", params![page_name], |row| row.get(1))
+    check_conn.query_row(
+        "select * from PAGES where page_title = (?1)",
+        params![page_name],
+        |row| row.get(1),
+    )
+}
+
+fn find_redirect(page_name: &str) -> Result<String> {
+    let find_redirect_conn = Connection::open("main.db").unwrap();
+    find_redirect_conn.query_row(
+        "select redirect_title from redirects where page_title = (?1)",
+        params![page_name],
+        |row| row.get(0),
+    )
+}
+
+fn find_depth(start_page: &str) -> Result<()> {
+    let search_start = Instant::now();
+    let mut seen: HashMap<String, String> = HashMap::new();
+    seen.insert(start_page.to_string(), start_page.to_string());
+    let mut queue: VecDeque<(String, i32)> = VecDeque::from([(String::from(start_page), 0)]);
+    let mut max_depth = 0;
+
+    let search_conn = Connection::open("main.db").unwrap();
+    let mut get_page_id = search_conn
+        .prepare("select id from PAGES where page_title = (?1)")
+        .unwrap();
+    let mut find_links = search_conn
+        .prepare("select link_title from LINKS where page_id = (?1)")
+        .unwrap();
+
+    while !queue.is_empty() {
+        let cur = queue.pop_front().unwrap();
+        let cur_name = cur.0;
+        let cur_depth = cur.1;
+        max_depth = std::cmp::max(max_depth, cur_depth);
+        let cur_id: usize = get_page_id
+            .query_row([cur_name.clone()], |row| row.get(0))
+            .unwrap();
+        let links = find_links
+            .query_map([cur_id], |row| {
+                let pt: String = row.get(0)?;
+                Ok(pt)
+            })
+            .unwrap();
+        for link in links {
+            // println!("{}", link);
+            let mut link_str = link?;
+            // println!("{}: {}", cur, link_str);
+            if let Err(e) = check_for_page(&link_str) {
+                if let Ok(redirect) = find_redirect(&link_str) {
+                    link_str = redirect;
+                } else {
+                    continue;
+                }
+            }
+            if !seen.contains_key(&link_str) {
+                seen.insert(link_str.clone(), cur_name.clone());
+                queue.push_back((link_str.clone(), cur_depth + 1));
+            }
+        }
+    }
+
+    println!("Max depth: {}", max_depth);
+
+    Ok(())
+}
+
+fn find_shortest_path(start_page: &str, end_page: &str) -> Result<()> {
+    // seen maps node to parent
+    // parent of start_page is start_page
+    let search_start = Instant::now();
+    let mut seen: HashMap<String, (String, Option<String>)> = HashMap::new();
+    seen.insert(start_page.to_string(), (start_page.to_string(), None));
+    let mut queue: VecDeque<String> = VecDeque::from([String::from(start_page)]);
+
+    let search_conn = Connection::open("main.db").unwrap();
+    let mut get_page_id = search_conn
+        .prepare("select id from PAGES where page_title = (?1)")
+        .unwrap();
+    let mut find_links = search_conn
+        .prepare("select link_title from LINKS where page_id = (?1)")
+        .unwrap();
+
+    while !queue.is_empty() {
+        let mut found = false;
+        let cur = queue.pop_front().unwrap();
+        let mut cur_id: usize = 0;
+        let res = get_page_id.query_row([cur.clone()], |row| row.get(0));
+        let mut is_redirect = false;
+        let mut redirect_str = String::new();
+        match res {
+            Ok(id) => cur_id = id,
+            Err(e) => {
+                eprintln!("Error getting page id for {}: {}", cur, e);
+                continue;
+            }
+        }
+        let links = find_links
+            .query_map([cur_id], |row| {
+                let pt: String = row.get(0)?;
+                Ok(pt)
+            })
+            .unwrap();
+        for link in links {
+            // println!("{}", link);
+            let mut link_str = link?;
+            // println!("{}: {}", cur, link_str);
+            if let Err(e) = check_for_page(&link_str) {
+                if let Ok(redirect) = find_redirect(&link_str) {
+                    redirect_str = link_str;
+                    is_redirect = true;
+                    link_str = redirect;
+                } else {
+                    continue;
+                }
+            }
+            if !seen.contains_key(&link_str) {
+                if is_redirect {
+                    seen.insert(link_str.clone(), (cur.clone(), Some(redirect_str.clone())));
+                }else {
+                    seen.insert(link_str.clone(), (cur.clone(), None));
+                }
+                is_redirect = false;
+                queue.push_back(link_str.clone());
+            }
+            if link_str.as_str() == end_page {
+                println!("Done");
+                found = true;
+                break;
+            }
+        }
+        if found {
+            break;
+        }
+    }
+    let mut cur = end_page;
+    let mut path: VecDeque<String> = VecDeque::new();
+    loop {
+        let parent = seen.get(cur).unwrap();
+        if parent.0 != cur {
+            if let Some(redirect_str) = &parent.1{
+                path.push_front(String::from(format!("{} (Redirected from: {})", cur, redirect_str)));
+            }else{
+                path.push_front(String::from(cur));
+            }
+            cur = parent.0.as_str();
+        } else {
+            path.push_front(String::from(cur));
+            break;
+        }
+    }
+    let search_end = search_start.elapsed();
+    println!("{:?}", path);
+    println!("Path found in {:?}", search_end);
+    Ok(())
 }
 
 fn main() {
@@ -527,7 +681,7 @@ fn main() {
                 let mut start_page = String::new();
                 std::io::stdin().read_line(&mut start_page).unwrap();
                 let start_page = start_page.trim();
-                if let Err(e) = check_for_page(start_page){
+                if let Err(e) = check_for_page(start_page) {
                     eprintln!("Page {} doesn't exist: {}", start_page, e);
                     continue;
                 }
@@ -537,11 +691,25 @@ fn main() {
                 let mut end_page = String::new();
                 std::io::stdin().read_line(&mut end_page).unwrap();
                 let end_page = end_page.trim();
-                if let Err(e) = check_for_page(end_page){
+                if let Err(e) = check_for_page(end_page) {
                     eprintln!("Page {} doesn't exist: {}", end_page, e);
                     continue;
                 }
-                
+
+                let path = find_shortest_path(start_page, end_page);
+            }
+            "depth" => {
+                print!("Enter start page: ");
+                std::io::stdout().flush().unwrap();
+                let mut start_page = String::new();
+                std::io::stdin().read_line(&mut start_page).unwrap();
+                let start_page = start_page.trim();
+                if let Err(e) = check_for_page(start_page) {
+                    eprintln!("Page {} doesn't exist: {}", start_page, e);
+                    continue;
+                }
+
+                let _ = find_depth(start_page);
             }
             "exit" => break,
             _ => println!("Invalid input, enter 'h' for list of commands."),
