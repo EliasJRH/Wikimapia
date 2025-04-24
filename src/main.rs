@@ -1,16 +1,20 @@
-use bzip2::read::BzDecoder;
-use quick_xml::events::Event;
-use quick_xml::reader::Reader;
-use regex::{Regex, RegexBuilder};
-use rusqlite::{params, Connection, Result};
-use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{remove_file, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::env;
+use std::fs::remove_file;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, available_parallelism};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::usize;
+
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use quick_xml::events::Event;
+use quick_xml::reader::Reader;
+use regex::RegexBuilder;
+use rusqlite::{params, Connection};
+
+mod file_utils;
+mod str_utils;
 
 #[derive(Debug)]
 enum State {
@@ -26,7 +30,7 @@ fn parse_and_write_db(
     contents: &str,
     db_conn: Arc<Mutex<Connection>>,
     lang_map: HashMap<String, String>,
-) -> Result<()> {
+) -> rusqlite::Result<()> {
     // HashMap to store stuff in memory until written to database
     let mut pages_to_links: HashMap<String, HashSet<String>> = HashMap::new();
     let mut redirects_to_pages: HashMap<String, String> = HashMap::new();
@@ -285,7 +289,7 @@ fn seed_db() -> rusqlite::Result<()> {
 
     for section in files_to_download {
         let section_time_start = Instant::now();
-        let contents_file = download_decompress_save_to_file(&section).unwrap();
+        let contents_file = file_utils::download_decompress_save_to_file(&section).unwrap();
 
         let connection = Connection::open(db_path).unwrap();
         let _ = connection.execute("PRAGMA synchronous = OFF;", params![]);
@@ -335,7 +339,7 @@ fn check_for_page(page_name: &str) -> rusqlite::Result<String> {
     )
 }
 
-fn find_redirect(page_name: &str) -> Result<String> {
+fn find_redirect(page_name: &str) -> rusqlite::Result<String> {
     let find_redirect_conn = Connection::open("main.db").unwrap();
     find_redirect_conn.query_row(
         "select redirect_title from redirects where page_title = (?1)",
@@ -344,7 +348,7 @@ fn find_redirect(page_name: &str) -> Result<String> {
     )
 }
 
-fn find_depth(start_page: &str) -> Result<()> {
+fn find_depth(start_page: &str) -> rusqlite::Result<()> {
     let search_start = Instant::now();
     let mut seen: HashMap<String, String> = HashMap::new();
     seen.insert(start_page.to_string(), start_page.to_string());
@@ -490,8 +494,28 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<()> 
     Ok(())
 }
 
-fn main() {
-    println!("Wikimapia v0.1.0. Enter 'h' for list of commands");
+#[get("/path/{start_page}/{end_page}")] // <- define path parameters
+async fn shortest_path_https(params: web::Path<(String, String)>) -> actix_web::Result<String> {
+    let (start_page, end_page) = params.into_inner();
+    Ok(format!(
+        "Welcome {}, user_id {}!",
+        start_page, end_page
+    ))
+}
+
+async fn start_server() -> std::io::Result<()>{
+    println!("wut");
+    HttpServer::new(|| {
+        App::new()
+            .service(shortest_path_https)
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
+}
+
+fn start_cli() {
+    println!("Wikimapia v0.2.0. Enter 'h' for list of commands");
     loop {
         print!("> ");
         std::io::stdout().flush().unwrap();
@@ -550,5 +574,21 @@ fn main() {
             "exit" => break,
             _ => println!("Invalid input, enter 'h' for list of commands."),
         }
+    }
+}
+
+#[actix_web::main]
+async fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        let mode = &args[1];
+        if mode == "server" {
+            println!("Server activated!");
+            start_server().await.unwrap();
+        } else if mode == "cli" {
+            start_cli();
+        }
+    } else {
+        println!("Must specify mode (cli or server)");
     }
 }
