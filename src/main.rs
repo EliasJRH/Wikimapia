@@ -21,28 +21,6 @@ enum State {
     NAMESPACE,
 }
 
-fn capitalize_first_char(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
-
-fn process_article_name<'a>(name: &'a str, _namespace_regex: &Regex) -> Option<&'a str> {
-    if name.starts_with(":") {
-        return None;
-    }
-    let mut split = name.split("|");
-    if let Some(processed_name) = split.next() {
-        if _namespace_regex.is_match(&(processed_name.split(" ").next().unwrap())) {
-            return None;
-        }
-        return Some(&processed_name);
-    }
-    return None;
-}
-
 fn parse_and_write_db(
     thread_id: usize,
     contents: &str,
@@ -62,11 +40,6 @@ fn parse_and_write_db(
     .case_insensitive(true)
     .build()
     .unwrap();
-
-    let namespace_regex = RegexBuilder::new(r"\w*:\S\w*")
-        .case_insensitive(true)
-        .build()
-        .unwrap();
 
     // xml reader object
     let mut reader = Reader::from_str(&contents);
@@ -118,8 +91,8 @@ fn parse_and_write_db(
             },
 
             /* This event handles all text within the dump file. We only really want to handle text in a few cases.
-            Either cur_state is State::TITLE (Meaning we just saw a title tag) or State::TEXT (We've hit a text tag and our cur_state is not
-            State::IGNORE) or State::NAMESPACE (We just saw a namespace tag). In the former, the text that we read will
+            Either cur_state is State::TITLE (Meaning we just saw a title tag) or State::NAMESPACE (We just saw a namespace tag)
+            or State::TEXT (We've hit a text tag and our cur_state is not State::IGNORE) . In the former, the text that we read will
             be the name of the page, in the second case its the namespace id and in the latter, the text will be the actual content on that page. When reading the content on
             the page, we use the links_regex to capture all links to other wikipedia articles. Those links will appear as text surrounded
             by [[ ]], so the link to Canada will be [[Canada]]. Links might also be a part of a sentence and so might not be exactly the
@@ -164,13 +137,14 @@ fn parse_and_write_db(
                     for cap in captures {
                         if let Some(val) = cap.get(1) {
                             let name_slice = &val.as_str()[2..val.len() - 2];
-                            if let Some(article_name) =
-                                process_article_name(name_slice, &namespace_regex)
+                            if let Some(article_name) = str_utils::process_article_name(name_slice)
                             {
                                 pages_to_links
                                     .get_mut(&cur_page)
                                     .unwrap()
-                                    .insert(String::from(capitalize_first_char(article_name)));
+                                    .insert(String::from(str_utils::capitalize_first_char(
+                                        article_name,
+                                    )));
                             }
                         }
                         if let Some(val) = cap.get(2) {
@@ -274,142 +248,9 @@ fn parse_and_write_db(
     Ok(())
 }
 
-fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String> {
-    // Create BufferedReader to determine size of file
-    let mut file_reader = BufReader::new(contents_file);
-    let divisions = divisions.unwrap_or(12);
-
-    let total_line_count = (&mut file_reader).lines().count();
-    println!("Total line count: {}", total_line_count);
-
-    /* Move BufferedReader back to beginning of file to start dividing file into mostly equal
-    parts.
-    */
-    let _ = file_reader.seek(SeekFrom::Start(0));
-    let mut content_vec: Vec<String> = Vec::new(); // Vector containing each part
-    let mut cur_line_count = 0;
-
-    /* A page must be fully contained within each block, we can't have part of a page be
-    in one block and the rest be in another as that would mess up parsing. Therefore, we
-    read at least total_line_count/divisions lines then check if the block ends with </page>
-    indicating the end of the page. If not, we just keep adding to the block until it does*/
-    for i in 1..divisions {
-        cur_line_count = 0;
-        let mut section = String::new();
-        for _ in 0..(total_line_count / divisions) {
-            let _ = file_reader.read_line(&mut section);
-            cur_line_count += 1;
-        }
-
-        if section.ends_with("</page>") {
-            continue;
-        }
-        loop {
-            let _ = file_reader.read_line(&mut section);
-            cur_line_count += 1;
-            if section.ends_with("</page>\n") {
-                break;
-            }
-        }
-        assert!(section.ends_with("</page>\n"));
-        println!("Section {} line count: {}", i, cur_line_count);
-        content_vec.push(section);
-        cur_line_count = 0;
-    }
-
-    /* The last section must contain the rest of the file, so we read until EOF */
-    let mut last_section = String::new();
-    loop {
-        let bytes = file_reader.read_line(&mut last_section);
-        match bytes {
-            Ok(c) => {
-                if c == 0 {
-                    break;
-                } else {
-                    cur_line_count += 1;
-                }
-            }
-            _ => (),
-        }
-    }
-    assert!(last_section.ends_with("</mediawiki>"));
-    println!("Section {} line count: {}", divisions, cur_line_count);
-
-    content_vec.push(last_section);
-    content_vec
-}
-
-fn get_files() -> Result<VecDeque<String>, Box<dyn std::error::Error>> {
-    let base_url = "https://dumps.wikimedia.org/enwiki/latest/";
-    let prefix = "enwiki-latest-pages-articles";
-    let suffix = ".bz2";
-
-    // Step 1: Fetch the directory listing
-    println!("Fetching directory listing from {}", base_url);
-    let html = reqwest::blocking::get(base_url)?.text()?;
-
-    // Step 2: Parse the HTML to find files with the given prefix
-    println!("Parsing directory listing...");
-    let document = Html::parse_document(&html);
-    let selector = Selector::parse("a").unwrap();
-    let mut files_to_download = VecDeque::new();
-
-    for element in document.select(&selector) {
-        if let Some(href) = element.value().attr("href") {
-            if href.starts_with(prefix)
-                && href.ends_with(suffix)
-                && !href.contains("multistream")
-                && !href.contains("articles.xml")
-            {
-                files_to_download.push_front(href.to_string());
-            }
-        }
-    }
-    Ok(files_to_download)
-}
-
-fn download_decompress_save_to_file(file_name: &String) -> Result<File, std::io::Error> {
-    let base_url = "https://dumps.wikimedia.org/enwiki/latest/";
-    let file_url = format!("{}{}", base_url, file_name);
-    let client = reqwest::blocking::Client::new();
-
-    let start_download = Instant::now();
-    println!("Downloading {}", file_name);
-    let response = client
-        .get(&file_url)
-        .timeout(Duration::from_secs(600))
-        .send()
-        .unwrap();
-    if !response.status().is_success() {
-        eprintln!("Failed to download {}: {}", file_url, response.status());
-    }
-    let compressed_data = response.bytes().unwrap();
-    let end_download = start_download.elapsed();
-    println!("{} downloaded in {:?}", file_name, end_download);
-
-    println!("Decompressing {}", file_name);
-    let cursor = std::io::Cursor::new(compressed_data);
-    let mut decompressor = BzDecoder::new(cursor);
-
-    let mut temp_file_path = std::env::temp_dir();
-    temp_file_path.push("decompressed_file.tmp");
-    let mut temp_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&temp_file_path)
-        .unwrap();
-
-    let mut buffer = Vec::new();
-    let _ = decompressor.read_to_end(&mut buffer);
-    temp_file.write_all(&buffer).unwrap();
-    println!("{} written to temp file", file_name);
-    File::open(&temp_file_path)
-}
-
-fn seed_db() -> Result<()> {
+fn seed_db() -> rusqlite::Result<()> {
     let total_time_start = Instant::now();
-    let mut files_to_download = get_files().unwrap();
+    let files_to_download = file_utils::get_wikipedia_dumps().unwrap();
     let num_sections = files_to_download.len();
     println!("Directory listing contains {} items", num_sections);
 
@@ -450,13 +291,8 @@ fn seed_db() -> Result<()> {
         let _ = connection.execute("PRAGMA synchronous = OFF;", params![]);
         let conn_mutex = Arc::new(Mutex::new(connection));
 
-        // 1 division -> 18 minutes
-        // 6 divisions -> 8 minutes
-        // 12 divisions -> 5.45 minutes
-        // 32 divisions -> Total time: 6.26 minutes
-        // 64 divisions -> Total time: 5.86 minutes
-        // Pretty much once you spawn num_cpu threads, performance doesn't increase
-        let content_vec = divide_input(contents_file, Some(num_cpus));
+        // Max out cpu usage by utilizing max number of threads
+        let content_vec = file_utils::divide_input(contents_file, Some(num_cpus));
 
         let mut handles: Vec<thread::JoinHandle<Result<(), rusqlite::Error>>> = vec![];
         for (i, group) in content_vec.into_iter().enumerate() {
@@ -487,14 +323,10 @@ fn seed_db() -> Result<()> {
         "Processing all Wikipedia sections took: {:?}",
         total_time_end
     );
-    // Total time nearly 8 hours!
-    // Total time only processing articles roughly 6 hours
-    // Maybe I'm an idiot???
-    // println!("Processing of {:?} took {:?}", path, article_time_end);
     Ok(())
 }
 
-fn check_for_page(page_name: &str) -> Result<String> {
+fn check_for_page(page_name: &str) -> rusqlite::Result<String> {
     let check_conn = Connection::open("main.db").unwrap();
     check_conn.query_row(
         "select * from PAGES where page_title = (?1)",
@@ -545,7 +377,7 @@ fn find_depth(start_page: &str) -> Result<()> {
             // println!("{}", link);
             let mut link_str = link?;
             // println!("{}: {}", cur, link_str);
-            if let Err(e) = check_for_page(&link_str) {
+            if let Err(_e) = check_for_page(&link_str) {
                 if let Ok(redirect) = find_redirect(&link_str) {
                     link_str = redirect;
                 } else {
@@ -559,12 +391,13 @@ fn find_depth(start_page: &str) -> Result<()> {
         }
     }
 
+    let search_end = search_start.elapsed();
     println!("Max depth: {}", max_depth);
-
+    println!("Depth found in {:?}", search_end);
     Ok(())
 }
 
-fn find_shortest_path(start_page: &str, end_page: &str) -> Result<()> {
+fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<()> {
     // seen maps node to parent
     // parent of start_page is start_page
     let search_start = Instant::now();
@@ -583,8 +416,8 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> Result<()> {
     while !queue.is_empty() {
         let mut found = false;
         let cur = queue.pop_front().unwrap();
-        let mut cur_id: usize = 0;
         let res = get_page_id.query_row([cur.clone()], |row| row.get(0));
+        let cur_id: usize;
         let mut is_redirect = false;
         let mut redirect_str = String::new();
         match res {
@@ -604,7 +437,7 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> Result<()> {
             // println!("{}", link);
             let mut link_str = link?;
             // println!("{}: {}", cur, link_str);
-            if let Err(e) = check_for_page(&link_str) {
+            if let Err(_e) = check_for_page(&link_str) {
                 if let Ok(redirect) = find_redirect(&link_str) {
                     redirect_str = link_str;
                     is_redirect = true;
@@ -616,7 +449,7 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> Result<()> {
             if !seen.contains_key(&link_str) {
                 if is_redirect {
                     seen.insert(link_str.clone(), (cur.clone(), Some(redirect_str.clone())));
-                }else {
+                } else {
                     seen.insert(link_str.clone(), (cur.clone(), None));
                 }
                 is_redirect = false;
@@ -637,9 +470,12 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> Result<()> {
     loop {
         let parent = seen.get(cur).unwrap();
         if parent.0 != cur {
-            if let Some(redirect_str) = &parent.1{
-                path.push_front(String::from(format!("{} (Redirected from: {})", cur, redirect_str)));
-            }else{
+            if let Some(redirect_str) = &parent.1 {
+                path.push_front(String::from(format!(
+                    "{} (Redirected from: {})",
+                    cur, redirect_str
+                )));
+            } else {
                 path.push_front(String::from(cur));
             }
             cur = parent.0.as_str();
@@ -696,7 +532,7 @@ fn main() {
                     continue;
                 }
 
-                let path = find_shortest_path(start_page, end_page);
+                let _path = find_shortest_path(start_page, end_page);
             }
             "depth" => {
                 print!("Enter start page: ");
