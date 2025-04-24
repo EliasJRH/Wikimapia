@@ -7,7 +7,7 @@ use std::thread::{self, available_parallelism};
 use std::time::Instant;
 use std::usize;
 
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use regex::RegexBuilder;
