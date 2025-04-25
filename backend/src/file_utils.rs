@@ -36,15 +36,12 @@ pub fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String
             cur_line_count += 1;
         }
 
-        if section.ends_with("</page>") {
-            continue;
-        }
         loop {
-            let _ = file_reader.read_line(&mut section);
-            cur_line_count += 1;
             if section.ends_with("</page>\n") {
                 break;
             }
+            let _ = file_reader.read_line(&mut section);
+            cur_line_count += 1;
         }
         assert!(section.ends_with("</page>\n"));
         println!("Section {} line count: {}", i, cur_line_count);
@@ -71,6 +68,7 @@ pub fn divide_input(contents_file: File, divisions: Option<usize>) -> Vec<String
     println!("Section {} line count: {}", divisions, cur_line_count);
 
     content_vec.push(last_section);
+    assert!(content_vec.len() == divisions);
     content_vec
 }
 
