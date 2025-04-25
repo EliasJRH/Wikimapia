@@ -577,14 +577,15 @@ fn start_cli() {
     }
 }
 
-#[actix_web::main]
-async fn main() {
+fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         let mode = &args[1];
         if mode == "server" {
             println!("Server activated!");
-            start_server().await.unwrap();
+            actix_rt::System::new().block_on(async {
+                start_server().await.expect("Server failed");
+            });
         } else if mode == "cli" {
             start_cli();
         }
