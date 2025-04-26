@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: backend/
+      dockerfile: Dockerfile
+    ports:
+      - "3333:3333"
+    volumes:
+      - ./main.db:/app/main.db
