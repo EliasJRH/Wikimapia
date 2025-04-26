@@ -5,6 +5,8 @@
   import DropdownSelect from './lib/DropdownSelect.svelte';
   import Footer from './lib/Footer.svelte';
   import Header from './lib/Header.svelte';
+
+  let foundPath: string[] = $state([])
 </script>
 
 <main>
@@ -16,6 +18,7 @@
     <img src={arrowRight} width="50px" height="auto" alt="" style="position: absolute;">
     <DropdownSelect placeholder_text = "Ending page"/>
   </div>
+  <button onclick={() => console.log("Gone")}>Go</button>
   <!-- <Footer/> -->
    
 </main>
@@ -25,6 +28,7 @@
     display: flex;
     flex-direction: row;
     justify-content: space-evenly;
+    margin-bottom: 5vh;
   }
 
   .inputs-holder img{

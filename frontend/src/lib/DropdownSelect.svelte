@@ -91,6 +91,7 @@
 <style>
   .input-container{
     width: 14vw;
+    transform: scale(1.2);
   }
   input {
     position: relative;
@@ -116,7 +117,7 @@
   }
   .dropdown {
     color: black;
-    position: relative;
+    position: absolute;
     background-color: white;
     border: 1px solid #ccc;
     border-radius: 5px;
@@ -125,6 +126,7 @@
     text-align: left;
     height: auto;
     z-index: 1000;  
+    width: 14vw;
     box-sizing: border-box;
   }
   .dropdown li {
@@ -138,7 +140,8 @@
   }
   @media (max-width: 768px) {
     .input-container{
-      width: auto
+      width: auto;
+      transform: scale(1);
     }
     input {
       font-size: 1rem; /* Adjust font size for smaller screens */
