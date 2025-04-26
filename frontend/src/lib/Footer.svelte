@@ -14,4 +14,7 @@
 </footer>
 
 <style>
+  .footer{
+    position: relative;
+  }
 </style>

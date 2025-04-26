@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fade, fly, slide } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   
   const search_titles_url = "https://en.wikipedia.org/w/rest.php/v1/search/title?";
   let props = $props();
@@ -25,8 +25,6 @@
       const computeTotalHeight = () => {
         const listItems = document.getElementsByClassName('listItem');
         const totalHeight = Array.from(listItems).reduce((sum, item) => sum + (item as HTMLElement).offsetHeight, 0);
-        const dd = document.querySelector(".dropdown")
-        console.log(dd)
         document.querySelector(".dropdown")?.setAttribute("height", `${totalHeight}px`)
       };
       computeTotalHeight();
@@ -41,9 +39,16 @@
     message = article;
     open = false;
   };
+
+  const handleBlur = (event: FocusEvent) => {
+    const relatedTarget = event.relatedTarget as HTMLElement | null;
+    if (!relatedTarget || !(event.currentTarget as HTMLElement)?.contains(relatedTarget)) {
+      open = false;
+    }
+  };
 </script>
 
-<div style="width: 14vw;">
+<div class="input-container" onfocusout={handleBlur}>
   <input 
     bind:value={message} 
     oninput={showList} 
@@ -84,6 +89,9 @@
   
 
 <style>
+  .input-container{
+    width: 14vw;
+  }
   input {
     position: relative;
     background-color: #a4a1a166;
@@ -99,6 +107,12 @@
     outline: none;
     box-shadow: 0px 4px 6px rgba(50, 115, 227, 0.5);
     transition: box-shadow 0.2s ease-in-out;
+  }
+  ul{
+    display: block;
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
   }
   .dropdown {
     color: black;
@@ -117,17 +131,27 @@
     padding: 10px;
     height: fit-content;
   }
-
-  ul{
-    display: block;
-    list-style-type: none;
-    margin: 0;
-    padding: 0;
-  }
   .dropdown li:hover,
   .dropdown li.selected {
     background-color: #007bff;
     color: white;
+  }
+  @media (max-width: 768px) {
+    .input-container{
+      width: auto
+    }
+    input {
+      font-size: 1rem; /* Adjust font size for smaller screens */
+      padding: 8px 12px; /* Adjust padding for smaller screens */
+      width: 80vw; /* Make input take more space on smaller screens */
+    }
+    .dropdown {
+      width: 80vw; /* Match the input width */
+      font-size: 0.9rem; /* Adjust font size for dropdown items */
+    }
+    .dropdown li {
+      padding: 8px; /* Adjust padding for dropdown items */
+    }
   }
 
 </style>
