@@ -401,7 +401,7 @@ fn find_depth(start_page: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<()> {
+fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<(VecDeque<String>)> {
     // seen maps node to parent
     // parent of start_page is start_page
     let search_start = Instant::now();
@@ -491,16 +491,27 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<()> 
     let search_end = search_start.elapsed();
     println!("{:?}", path);
     println!("Path found in {:?}", search_end);
-    Ok(())
+    Ok(path)
 }
 
 #[get("/path/{start_page}/{end_page}")] // <- define path parameters
-async fn shortest_path_https(params: web::Path<(String, String)>) -> actix_web::Result<String> {
+async fn shortest_path_https(params: web::Path<(String, String)>) -> actix_web::Result<impl Responder> {
     let (start_page, end_page) = params.into_inner();
-    Ok(format!(
-        "Welcome {}, user_id {}!",
-        start_page, end_page
-    ))
+    match find_shortest_path(&start_page, &end_page) {
+        Ok(path) => {
+            let response = serde_json::json!({
+                "start_page": start_page,
+                "end_page": end_page,
+                "path": path,
+                "path_length": path.len(),
+            });
+            Ok(HttpResponse::Ok().json(response))
+        }
+        Err(e) => {
+            eprintln!("Error finding shortest path: {}", e);
+            Err(actix_web::error::ErrorInternalServerError("Failed to find shortest path"))
+        }
+    }
 }
 
 async fn start_server() -> std::io::Result<()>{
