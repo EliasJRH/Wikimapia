@@ -76,7 +76,7 @@
       .type(randomTopics[7])
       .move(4)
       .type(randomTopics[8])
-      // .options({cursor: false, cursorChar: ""})
+      .move(1)
       .go()
   })
 </script>
@@ -91,23 +91,28 @@
     color: black;
     position: relative;
     left: 0;
-    margin: auto;
     display: flex;
     justify-content: center;
     align-items: center;
     text-align: center;
-    min-height: 50vh;
     flex-direction: column;
+    margin:2%;
+    margin-bottom: 6%;
   }
 
   .display-text h1 {
     font-size: 5rem;
     margin: 0;
+    line-height: 1.5;
   }
 
   @media (max-width: 768px) {
     .display-text h1 {
       font-size: 2rem;
+      min-width: 80vw;
+    }
+    
+    .display-text h2{
       min-width: 80vw;
     }
   }

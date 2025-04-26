@@ -14,7 +14,7 @@
     padding-left: 2em;
     width: 100%;
     min-width: 990px;
-    position: fixed;
+    position: relative;
     left: 0;
   }
 
