@@ -401,7 +401,7 @@ fn find_depth(start_page: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<(VecDeque<String>)> {
+fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecDeque<String>> {
     // seen maps node to parent
     // parent of start_page is start_page
     let search_start = Instant::now();
