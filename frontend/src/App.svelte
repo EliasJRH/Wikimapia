@@ -14,9 +14,9 @@
   <Header/>
   <DisplayText/>
   <div class="inputs-holder">
-    <DropdownSelect placeholder_text = "Starting page"/>
-    <img src={arrowRight} width="50px" height="auto" alt="" style="position: absolute;">
-    <DropdownSelect placeholder_text = "Ending page"/>
+    <DropdownSelect placeholder_text = "Starting article"/>
+    <img src={arrowRight} width="50px" height="auto" alt="">
+    <DropdownSelect placeholder_text = "Ending article"/>
   </div>
   <button onclick={() => console.log("Gone")}>Go</button>
   <!-- <Footer/> -->
@@ -32,7 +32,8 @@
   }
 
   .inputs-holder img{
-    position: relative;
+    position: absolute; 
+    transform:scale(2)
   }
 
   @media (max-width: 768px) {

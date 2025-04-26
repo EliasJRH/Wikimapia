@@ -106,6 +106,10 @@
     line-height: 1.5;
   }
 
+  .display-text h2{
+    font-size: 2rem;
+  }
+
   @media (max-width: 768px) {
     .display-text h1 {
       font-size: 2rem;
@@ -114,6 +118,7 @@
     
     .display-text h2{
       min-width: 80vw;
+      font-size: 1.3rem;
     }
   }
 </style>
