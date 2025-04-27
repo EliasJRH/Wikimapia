@@ -38,7 +38,20 @@
     <img src={arrowRight} width="50px" height="auto" alt="">
     <DropdownSelect bind:articleName={endingArticle} placeholder_text = "Ending article"/>
   </div>
-  <button onclick={() => console.log("Gone")}>Go</button>
+  <button onclick={findShortestPath}>Go</button>
+  {#if loading}
+    <div class="loading-div">
+      <h1 transition:fly={{ duration: 500 }}>
+        <span>L</span>
+        <span>O</span>
+        <span>A</span>
+        <span>D</span>
+        <span>I</span>
+        <span>N</span>
+        <span>G</span>
+      </h1>
+    </div>
+  {/if}
   <!-- <Footer/> -->
    
 </main>
@@ -54,6 +67,45 @@
   .inputs-holder img{
     position: absolute; 
     transform:scale(2)
+  }
+
+  .loading-div {
+    position: relative;
+    color: black
+  }
+
+  /* Copied from https://www.youtube.com/watch?v=eHJoKjMbKt4 */
+  .loading-div h1 span {
+    display: inline-block;
+    animation: bounce 2s ease infinite;
+  }
+
+  .loading-div h1 span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .loading-div h1 span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  .loading-div h1 span:nth-child(4) {
+    animation-delay: 0.6s;
+  }
+  .loading-div h1 span:nth-child(5) {
+    animation-delay: 0.8s;
+  }
+  .loading-div h1 span:nth-child(6) {
+    animation-delay: 1s;
+  }
+  .loading-div h1 span:nth-child(7) {
+    animation-delay: 1.2s;
+  }
+
+  @keyframes bounce {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-20px);
+    }
   }
 
   @media (max-width: 768px) {
