@@ -12,6 +12,7 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use regex::RegexBuilder;
 use rusqlite::{params, Connection};
+use serde::Deserialize;
 
 mod file_utils;
 mod str_utils;
@@ -23,6 +24,12 @@ enum State {
     IGNORE,
     TEXT,
     NAMESPACE,
+}
+
+#[derive(Deserialize)]
+struct ShortestPathQueryParams {
+    startpage: String,
+    endpage: String
 }
 
 fn parse_and_write_db(
@@ -494,18 +501,18 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecD
     Ok(path)
 }
 
-#[get("/path/{start_page}/{end_page}")] // <- define path parameters
-async fn shortest_path_https(params: web::Path<(String, String)>) -> actix_web::Result<impl Responder> {
-    let (start_page, end_page) = params.into_inner();
-    match find_shortest_path(&start_page, &end_page) {
+#[get("/path")] // <- define path parameters
+async fn shortest_path_https(params: web::Query<ShortestPathQueryParams>) -> actix_web::Result<impl Responder> {
+    println!("Searching for shortest path between {} and {}", &params.startpage,  &params.endpage);
+    match find_shortest_path(&params.startpage, &params.endpage) {
         Ok(path) => {
             let response = serde_json::json!({
-                "start_page": start_page,
-                "end_page": end_page,
+                "start_page": params.startpage,
+                "end_page": params.endpage,
                 "path": path,
                 "path_length": path.len(),
             });
-            Ok(HttpResponse::Ok().json(response))
+            Ok(HttpResponse::Ok().append_header(("Access-Control-Allow-Origin", "*")).json(response))
         }
         Err(e) => {
             eprintln!("Error finding shortest path: {}", e);
@@ -515,7 +522,7 @@ async fn shortest_path_https(params: web::Path<(String, String)>) -> actix_web::
 }
 
 async fn start_server() -> std::io::Result<()>{
-    println!("wut");
+    println!("Starting server at http://0.0.0.0:8080");
     HttpServer::new(|| {
         App::new()
             .service(shortest_path_https)
@@ -593,7 +600,6 @@ fn main() {
     if args.len() > 1 {
         let mode = &args[1];
         if mode == "server" {
-            println!("Server activated!");
             actix_rt::System::new().block_on(async {
                 start_server().await.expect("Server failed");
             });
