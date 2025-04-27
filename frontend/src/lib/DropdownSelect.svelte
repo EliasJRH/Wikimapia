@@ -3,16 +3,15 @@
   import { slide } from 'svelte/transition';
   
   const search_titles_url = "https://en.wikipedia.org/w/rest.php/v1/search/title?";
-  let props = $props();
-	let message = $state("");
+  let { articleName = $bindable(), ...props } = $props();
   let selectedIndex = $state(-1);
   let open = $state(false)
   let possible_articles: string[] = $state([])
   
   $effect(() => {
-    if (message.length > 0){
+    if (articleName.length > 0){
       let params = new URLSearchParams({
-        q: message,
+        q: articleName,
         limit: "10"
       })
       fetch(search_titles_url + params.toString())
@@ -36,7 +35,7 @@
   }
 
   const selectArticle = (article: any) => {
-    message = article;
+    articleName = article;
     open = false;
   };
 
@@ -50,7 +49,7 @@
 
 <div class="input-container" onfocusout={handleBlur}>
   <input 
-    bind:value={message} 
+    bind:value={articleName} 
     oninput={showList} 
     placeholder={props.placeholder_text} 
     onkeydown={(e) => {
