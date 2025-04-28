@@ -1,14 +1,20 @@
 <script lang="ts">
-  import { fly } from 'svelte/transition';
+  import { blur, fly } from 'svelte/transition';
 
   import arrowRight from './assets/arrow-right.svg'
   import Background from './lib/Background.svelte';
   import DisplayText from './lib/DisplayText.svelte';
   import DropdownSelect from './lib/DropdownSelect.svelte';
+  import Card from './lib/Card.svelte';
   import Footer from './lib/Footer.svelte';
   import Header from './lib/Header.svelte';
 
   let searchUrl = "http://localhost:8080/path?"
+
+  // type ArticleInfo = {
+  //   title: string;
+  //   description: string;
+  // };
 
   let startingArticle = $state("")
   let endingArticle = $state("")
@@ -22,10 +28,17 @@
         endpage: endingArticle
       })
     loading = true
-    fetch(searchUrl + params.toString()).then(res => res.json()).then(data => {
-      console.log(data)
-      loading = false
-    })
+    fetch(searchUrl + params.toString())
+      .then(res => res.json())
+      .then(data => {
+        console.log(data)
+        // foundPath = data.map((item: any) => ({
+        //   title: item.title,
+        //   description: item.description
+        // }))
+        foundPath = data.path
+        loading = false
+      })
   }
 </script>
 
@@ -42,16 +55,24 @@
   {#if loading}
     <div class="loading-div">
       <h1 transition:fly={{ duration: 500 }}>
-        <span>L</span>
-        <span>O</span>
-        <span>A</span>
-        <span>D</span>
-        <span>I</span>
-        <span>N</span>
-        <span>G</span>
+        <span style="--delay: 0s;">L</span>
+        <span style="--delay: 0.2s;">O</span>
+        <span style="--delay: 0.4s;">A</span>
+        <span style="--delay: 0.6s;">D</span>
+        <span style="--delay: 0.8s;">I</span>
+        <span style="--delay: 1s;">N</span>
+        <span style="--delay: 1.2s;">G</span>
       </h1>
     </div>
+  {:else if foundPath.length > 0}
+    <div transition:fly={{ duration: 500 }} class="path-div">
+      {#each foundPath as page, index}
+        <span transition:blur={{ delay: (index * 0.4) * 10000 }} style:transform={index % 2 == 0 ? 'translateY(3vh)' : 'translateY(-3vh)'}><Card cardArticleName={page} cardArticleDesc={page}/></span>
+        {#if index + 1 !== foundPath.length} <img transition:blur={{ delay: ((index * 0.4) + 0.1) * 10000 }} style:transform='scale(1.8) {index % 2 == 0 ? 'rotate(-30deg)' : 'rotate(30deg)'}' src={arrowRight} width="50px" height="auto" alt=""> {/if}
+      {/each}
+    </div> 
   {/if}
+  
   <!-- <Footer/> -->
    
 </main>
@@ -80,23 +101,8 @@
     animation: bounce 2s ease infinite;
   }
 
-  .loading-div h1 span:nth-child(2) {
-    animation-delay: 0.2s;
-  }
-  .loading-div h1 span:nth-child(3) {
-    animation-delay: 0.4s;
-  }
-  .loading-div h1 span:nth-child(4) {
-    animation-delay: 0.6s;
-  }
-  .loading-div h1 span:nth-child(5) {
-    animation-delay: 0.8s;
-  }
-  .loading-div h1 span:nth-child(6) {
-    animation-delay: 1s;
-  }
-  .loading-div h1 span:nth-child(7) {
-    animation-delay: 1.2s;
+  .loading-div h1 span {
+    animation-delay: var(--delay, 0s);
   }
 
   @keyframes bounce {
@@ -106,6 +112,19 @@
     50% {
       transform: translateY(-20px);
     }
+  }
+
+  .path-div{
+    align-items: center;
+    display:flex;
+    flex-direction: row;
+    justify-content: center;
+    margin-top: 3vh;
+  }
+
+  .path-div img {
+    position: relative;
+    transform: scale(1.8);
   }
 
   @media (max-width: 768px) {

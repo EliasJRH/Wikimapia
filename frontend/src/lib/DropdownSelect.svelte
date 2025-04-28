@@ -8,6 +8,7 @@
   let open = $state(false)
   let possible_articles: string[] = $state([])
   
+  // Effect ran whenever articleName changes (user types new input)
   $effect(() => {
     if (articleName.length > 0){
       let params = new URLSearchParams({

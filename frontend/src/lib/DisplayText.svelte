@@ -46,7 +46,6 @@
   document.addEventListener("DOMContentLoaded", function () {
     new TypeIt("#test", {
       speed: 50,
-      // strings: [`How do you get from ${randomTopics[0]} to ${randomTopics[1]}?`, `${randomTopics[2]} to ${randomTopics[3]}?`],
       lifeLike: true,
       breakLines: false,
       nextStringDelay: 1000,
