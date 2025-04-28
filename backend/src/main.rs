@@ -13,6 +13,7 @@ use quick_xml::reader::Reader;
 use regex::RegexBuilder;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
+use std::fs::OpenOptions;
 
 mod file_utils;
 mod str_utils;
@@ -127,6 +128,15 @@ fn parse_and_write_db(
             Ok(Event::Text(e)) => match cur_state {
                 State::TITLE => {
                     cur_page = String::from(e.unescape().unwrap().into_owned());
+                    if cur_page == "Bacteria"{
+                        let log_file_path = format!("logs/thread_{}.log", thread_id);
+                        let mut log_file = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(log_file_path)
+                            .unwrap();
+                        writeln!(log_file, "{}", cur_page).unwrap();
+                    } 
                     pages_to_links.insert(cur_page.clone(), HashSet::new());
                     cur_state = State::IDLE;
                 }
@@ -256,6 +266,7 @@ fn parse_and_write_db(
         Err(e) => eprintln!("Error inserting redirects: {}", e),
     }
 
+    drop(connection);
     Ok(())
 }
 
@@ -295,6 +306,9 @@ fn seed_db() -> rusqlite::Result<()> {
     }
 
     for section in files_to_download {
+        // if section != "enwiki-latest-pages-articles12.xml-p8554860p9172788.bz2" {
+        //     continue;
+        // }
         let section_time_start = Instant::now();
         let contents_file = file_utils::download_decompress_save_to_file(&section).unwrap();
 
@@ -316,7 +330,10 @@ fn seed_db() -> rusqlite::Result<()> {
         }
 
         for handle in handles {
-            let _ = handle.join().expect("Thread panicked!");
+            let _ = handle.join().unwrap_or_else(|err| {
+                eprintln!("A thread panicked: {:?}", err);
+                std::process::exit(1); // Exit the application with a non-zero status code
+            });
         }
 
         let section_time_end = section_time_start.elapsed();
