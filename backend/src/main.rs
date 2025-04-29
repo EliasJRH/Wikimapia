@@ -7,7 +7,7 @@ use std::thread::{self, available_parallelism};
 use std::time::Instant;
 use std::usize;
 
-use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{App, HttpResponse, HttpServer, Responder, get, web};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use regex::RegexBuilder;
@@ -30,7 +30,7 @@ enum State {
 #[derive(Deserialize)]
 struct ShortestPathQueryParams {
     startpage: String,
-    endpage: String
+    endpage: String,
 }
 
 fn parse_and_write_db(
@@ -519,8 +519,13 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecD
 }
 
 #[get("/path")] // <- define path parameters
-async fn shortest_path_https(params: web::Query<ShortestPathQueryParams>) -> actix_web::Result<impl Responder> {
-    println!("Searching for shortest path between {} and {}", &params.startpage,  &params.endpage);
+async fn shortest_path_https(
+    params: web::Query<ShortestPathQueryParams>,
+) -> actix_web::Result<impl Responder> {
+    println!(
+        "Searching for shortest path between {} and {}",
+        &params.startpage, &params.endpage
+    );
     match find_shortest_path(&params.startpage, &params.endpage) {
         Ok(path) => {
             let response = serde_json::json!({
@@ -529,24 +534,25 @@ async fn shortest_path_https(params: web::Query<ShortestPathQueryParams>) -> act
                 "path": path,
                 "path_length": path.len(),
             });
-            Ok(HttpResponse::Ok().append_header(("Access-Control-Allow-Origin", "*")).json(response))
+            Ok(HttpResponse::Ok()
+                .append_header(("Access-Control-Allow-Origin", "*"))
+                .json(response))
         }
         Err(e) => {
             eprintln!("Error finding shortest path: {}", e);
-            Err(actix_web::error::ErrorInternalServerError("Failed to find shortest path"))
+            Err(actix_web::error::ErrorInternalServerError(
+                "Failed to find shortest path",
+            ))
         }
     }
 }
 
-async fn start_server() -> std::io::Result<()>{
+async fn start_server() -> std::io::Result<()> {
     println!("Starting server at http://0.0.0.0:8080");
-    HttpServer::new(|| {
-        App::new()
-            .service(shortest_path_https)
-    })
-    .bind(("0.0.0.0", 8080))?
-    .run()
-    .await
+    HttpServer::new(|| App::new().service(shortest_path_https))
+        .bind(("0.0.0.0", 8080))?
+        .run()
+        .await
 }
 
 fn start_cli() {
