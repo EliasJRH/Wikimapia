@@ -420,11 +420,13 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecD
     // seen maps node to parent
     // parent of start_page is start_page
     let search_start = Instant::now();
-    let mut seen: HashMap<String, (String, Option<String>)> = HashMap::new();
-    seen.insert(start_page.to_string(), (start_page.to_string(), None));
-    let mut queue: VecDeque<String> = VecDeque::from([String::from(start_page)]);
-
     let search_conn = Connection::open("main.db").unwrap();
+    let mut num_articles_stmt= search_conn.prepare("select count(id) from pages")?;
+    let num_articles: usize = num_articles_stmt.query_row([], |row| row.get(0))?;
+    println!("Number of articles: {}", num_articles);
+    let mut seen = BitSet::with_capacity(num_articles);
+    let mut parents: HashMap<String, (String, Option<String>)> = HashMap::new();
+
     let mut get_page_id = search_conn
         .prepare("select id from PAGES where page_title = (?1)")
         .unwrap();
@@ -432,8 +434,14 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecD
         .prepare("select link_title from LINKS where page_id = (?1)")
         .unwrap();
 
+    parents.insert(start_page.to_string(), (start_page.to_string(), None));
+    let mut queue: VecDeque<String> = VecDeque::from([String::from(start_page)]);
+    let start_page_id: usize = get_page_id.query_row([start_page.to_string().clone()], |row| row.get(0))?;
+    seen.insert(start_page_id);
+
+    let mut found = false;
     while !queue.is_empty() {
-        let mut found = false;
+        found = false;
         let cur = queue.pop_front().unwrap();
         let res = get_page_id.query_row([cur.clone()], |row| row.get(0));
         let cur_id: usize;
@@ -453,9 +461,7 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecD
             })
             .unwrap();
         for link in links {
-            // println!("{}", link);
             let mut link_str = link?;
-            // println!("{}: {}", cur, link_str);
             if let Err(_e) = check_for_page(&link_str) {
                 if let Ok(redirect) = find_redirect(&link_str) {
                     redirect_str = link_str;
@@ -465,13 +471,20 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecD
                     continue;
                 }
             }
-            if !seen.contains_key(&link_str) {
+            let link_id: usize = match get_page_id.query_row([link_str.clone()], |row| row.get(0)) {
+                Ok(id) => id,
+                Err(_e) => {
+                    continue;
+                }
+            };
+            if !seen.contains(link_id) {
                 if is_redirect {
-                    seen.insert(link_str.clone(), (cur.clone(), Some(redirect_str.clone())));
+                    parents.insert(link_str.clone(), (cur.clone(), Some(redirect_str.clone())));
                 } else {
-                    seen.insert(link_str.clone(), (cur.clone(), None));
+                    parents.insert(link_str.clone(), (cur.clone(), None));
                 }
                 is_redirect = false;
+                seen.insert(link_id);
                 queue.push_back(link_str.clone());
             }
             if link_str.as_str() == end_page {
@@ -487,7 +500,7 @@ fn find_shortest_path(start_page: &str, end_page: &str) -> rusqlite::Result<VecD
     let mut cur = end_page;
     let mut path: VecDeque<String> = VecDeque::new();
     loop {
-        let parent = seen.get(cur).unwrap();
+        let parent = parents.get(cur).unwrap();
         if parent.0 != cur {
             if let Some(redirect_str) = &parent.1 {
                 path.push_front(String::from(format!(
