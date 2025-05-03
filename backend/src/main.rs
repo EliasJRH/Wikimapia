@@ -13,7 +13,7 @@ use quick_xml::reader::Reader;
 use regex::RegexBuilder;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
-use std::fs::OpenOptions;
+use bit_set::BitSet;
 
 mod file_utils;
 mod str_utils;
@@ -128,15 +128,6 @@ fn parse_and_write_db(
             Ok(Event::Text(e)) => match cur_state {
                 State::TITLE => {
                     cur_page = String::from(e.unescape().unwrap().into_owned());
-                    if cur_page == "Bacteria"{
-                        let log_file_path = format!("logs/thread_{}.log", thread_id);
-                        let mut log_file = OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(log_file_path)
-                            .unwrap();
-                        writeln!(log_file, "{}", cur_page).unwrap();
-                    } 
                     pages_to_links.insert(cur_page.clone(), HashSet::new());
                     cur_state = State::IDLE;
                 }
@@ -202,7 +193,7 @@ fn parse_and_write_db(
 
         // Prepared statements to insert a page title into the PAGES table and get the id from the page after its inserted
         let mut page_title_insert = connection
-            .prepare("insert into PAGES(page_title) values(?1);")
+            .prepare("insert or ignore into PAGES(page_title) values(?1);")
             .unwrap();
         let mut get_last_id = connection
             .prepare("select id from PAGES where page_title = (?1);")
